@@ -23,12 +23,13 @@ class BaseModel:
         self.idata = None  # inference data
 
     @staticmethod
-    def _setup_model(obs_data, priors, n_cases) -> pm.Model:
+    def _setup_model(obs_data, priors) -> pm.Model:
         # setup coords
         reader, study_readers = obs_data.reader.factorize()
+        case, study_cases = obs_data.case.factorize()
         treatment = obs_data.treatment.values
 
-        coords = {"reader": study_readers}
+        coords = {"reader": study_readers, "case": study_cases}
 
         with pm.Model(coords=coords) as model:
             treatment_idx = pm.Data(
@@ -36,6 +37,9 @@ class BaseModel:
             )
             reader_idx = pm.Data(
                 "reader_idx", reader, dims="obs_id"
+            )
+            case_idx = pm.Data(
+                "case_idx", case, dims="obs_id"
             )
 
             # model definition
@@ -79,6 +83,20 @@ class BaseModel:
                 "beta", mu_b + z_b * sigma_b, dims="reader"
             )
 
+            # Reader-case interaction (non-centered)
+            sigma_rc = pm.HalfNormal(
+                "sigma_rc",
+                1,
+            )
+            z_rc = pm.Normal(
+                "z_rc", mu=0, sigma=1, dims=("reader", "case")
+            )
+            reader_case_interaction = pm.Deterministic(
+                "reader_case_interaction",
+                z_rc * sigma_rc,
+                dims=("reader", "case"),
+            )
+
             # overdispersion
             gamma = pm.TruncatedNormal(
                 "gamma",
@@ -93,6 +111,7 @@ class BaseModel:
                 pm.math.invlogit(
                     alpha[reader_idx]
                     + beta[reader_idx] * treatment_idx
+                    + reader_case_interaction[reader_idx, case_idx]
                 ),
                 epsilon,
                 1 - epsilon,
@@ -108,10 +127,11 @@ class BaseModel:
             # likelihood
             y = pm.BetaBinomial(
                 "k",
-                n=n_cases,
+                n=1,
                 alpha=a_beta,
                 beta=b_beta,
-                observed=obs_data.k,
+                # observed=obs_data.k,
+                observed=obs_data.truth,
                 dims="obs_id",
             )
         return model
@@ -222,9 +242,9 @@ class BaseModel:
         # Create a boolean column for correct predictions
         df["correct"] = df["rating_binary"] == df["truth"]
 
-        # Group by reader and treatment, count correct predictions
+        # Group by reader, case, and treatment to preserve case information for reader-case interactions
         result = (
-            df.groupby(["reader", "treatment"])["correct"]
+            df.groupby(["reader", "case", "treatment"])["correct"]
             .sum()
             .reset_index()
         )
@@ -240,7 +260,7 @@ class BaseModel:
         mapping = {levels[0]: 0, levels[1]: 1}
 
         # apply it in‑place or on a copy
-        df['treatment'] = df['treatment'].copy().map(mapping)
+        result['treatment'] = result['treatment'].copy().map(mapping)
 
         return result
 
@@ -361,14 +381,14 @@ class BaseModel:
         return prior_params
 
     def _run_inference(self, obs_data, rating_threshold):
-        data = self.transform_obs_data(
-            obs_data.copy(),
-            rating_threshold,
-        )
-        n_cases = len(obs_data.case.unique())
-
+        # data = self.transform_obs_data(
+        #     obs_data.copy(),
+        #     rating_threshold,
+        # )
+        # n_cases = len(obs_data.case.unique())
+        data = obs_data.copy()
         model = self._setup_model(
-            data, self.priors, n_cases
+            data, self.priors,
         )
 
         with model:
@@ -397,7 +417,6 @@ class BaseModel:
         )
 
 
-
 class BalancedModel(BaseModel):
     def __init__(
         self,
@@ -405,7 +424,6 @@ class BalancedModel(BaseModel):
         priors: Optional[dict] | Optional[str] = "diffuse",
         ):
         super().__init__(obs_data, priors)
-
     
     def _run_inference(self, rating_threshold):
         negative_data = self.obs_data[self.obs_data.truth == 0].copy()
