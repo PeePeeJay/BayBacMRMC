@@ -211,3 +211,6 @@ __marimo__/
 *.png
 *.jpg
 tests/.figures/
+
+# vscode settings
+.vscode/
