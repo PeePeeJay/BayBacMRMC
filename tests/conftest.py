@@ -16,8 +16,8 @@ def vandyke_df(vandyke_csv_path):
 
 @pytest.fixture
 def cxr_df():
-    """Provides the cxr_bsi_mrmc.csv data as a pandas DataFrame."""
-    return pd.read_csv("data/cxr_bsi_mrmc.csv")
+    """Provides the cxr_bsi.csv data as a pandas DataFrame."""
+    return pd.read_csv("data/cxr_bsi.csv")
 
 
 @pytest.fixture

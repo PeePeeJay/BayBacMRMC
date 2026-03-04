@@ -1,7 +1,6 @@
 import os
 from mrmc_baybac.model import BaseModel, BalancedModel
 
-
 def test__run_inference_with_default_priors(vandyke_df):
     obs_data = vandyke_df
     rating_threshold = 3
@@ -95,7 +94,7 @@ def test_roc_curve_analysis_cxr_mrmc(cxr_df):
 def test_plot_tpr_tnr_by_threshold_creates_file(vandyke_df, tmp_path):
     """BalancedModel.plot_tpr_tnr_by_threshold should save a figure file."""
     balanced_model = BalancedModel(obs_data=vandyke_df)
-    out_file =  "./tpr_tnr_by_threshold.png"
+    out_file =  "./tests/.figures/tpr_tnr_by_threshold.png"
     path = balanced_model.plot_tpr_tnr_by_threshold(filename=str(out_file))
     assert os.path.isfile(path)
     # optional: ensure extension matches
@@ -122,11 +121,21 @@ def test_plot_roc_curve_with_hdi_creates_file(vandyke_df, tmp_path):
 def test_plot_roc_curve_with_hdi_cxr_data(cxr_df, tmp_path):
     """BalancedModel.plot_roc_curve_with_hdi should save a figure file with CXR data."""
     balanced_model = BalancedModel(obs_data=cxr_df)
-    out_file = "./roc_curve_with_hdi_cxr.png"
+    out_file = "./tests/.figures/roc_curve_with_hdi_cxr.png"
     path = balanced_model.plot_roc_curve_with_hdi(filename=str(out_file))
     assert os.path.isfile(path)
     # optional: ensure extension matches
     assert path.endswith(".png")
+
+def test_plot_roc_curve_with_hdi_cxr_data_weakly_inf_priors(cxr_df, tmp_path):
+    """BalancedModel.plot_roc_curve_with_hdi should save a figure file with CXR data."""
+    balanced_model = BalancedModel(obs_data=cxr_df, priors="weakly informative")
+    out_file = "./tests/.figures/roc_curve_with_hdi_cxr.png"
+    path = balanced_model.plot_roc_curve_with_hdi(filename=str(out_file))
+    assert os.path.isfile(path)
+    # optional: ensure extension matches
+    assert path.endswith(".png")
+
 
 
 

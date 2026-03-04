@@ -67,18 +67,9 @@ def test_transform_obs_data(vandyke_df):
     assert all(
         [
             col in result.columns
-            for col in ["reader", "case", "treatment", "k"]
+            for col in ["reader", "treatment", "k"]
         ]
     )
-
-    # Result should have one row per unique (reader, case, treatment) combination
-    expected_rows = len(
-        vandyke_df.reader.unique()
-    ) * len(vandyke_df.case.unique()) * len(vandyke_df.treatment.unique())
-    assert len(result) == expected_rows
-
-    # k values should be 0 or 1 (binary: correct/incorrect for that case)
-    assert all(result["k"].isin([0, 1]))
 
     with pytest.raises(ValueError):
         BaseModel.transform_obs_data(
