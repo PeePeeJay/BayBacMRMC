@@ -84,19 +84,19 @@ class BaseModel:
                 "beta", mu_b + z_b * sigma_b, dims="reader"
             )
 
-            # Reader-case interaction (non-centered)
-            sigma_rc = pm.HalfNormal(
-                "sigma_rc",
-                1,
-            )
-            z_rc = pm.Normal(
-                "z_rc", mu=0, sigma=1, dims=("reader", "case")
-            )
-            reader_case_interaction = pm.Deterministic(
-                "reader_case_interaction",
-                z_rc * sigma_rc,
-                dims=("reader", "case"),
-            )
+            # # Reader-case interaction (non-centered)
+            # sigma_rc = pm.HalfNormal(
+            #     "sigma_rc",
+            #     1,
+            # )
+            # z_rc = pm.Normal(
+            #     "z_rc", mu=0, sigma=1, dims=("reader", "case")
+            # )
+            # reader_case_interaction = pm.Deterministic(
+            #     "reader_case_interaction",
+            #     z_rc * sigma_rc,
+            #     dims=("reader", "case"),
+            # )
 
             # overdispersion
             gamma = pm.TruncatedNormal(
@@ -112,7 +112,7 @@ class BaseModel:
                 pm.math.invlogit(
                     alpha[reader_idx]
                     + beta[reader_idx] * treatment_idx
-                    + reader_case_interaction[reader_idx, case_idx]
+                    # + reader_case_interaction[reader_idx, case_idx]
                 ),
                 epsilon,
                 1 - epsilon,
@@ -128,11 +128,10 @@ class BaseModel:
             # likelihood
             y = pm.BetaBinomial(
                 "k",
-                n=1,
+                n=len(obs_data.case.unique()),
                 alpha=a_beta,
                 beta=b_beta,
-                # observed=obs_data.k,
-                observed=obs_data.truth,
+                observed=obs_data.k,
                 dims="obs_id",
             )
         return model
@@ -382,12 +381,11 @@ class BaseModel:
         return prior_params
 
     def _run_inference(self, obs_data, rating_threshold):
-        # data = self.transform_obs_data(
-        #     obs_data.copy(),
-        #     rating_threshold,
-        # )
-        # n_cases = len(obs_data.case.unique())
-        data = obs_data.copy()
+        data = self.transform_obs_data(
+            obs_data.copy(),
+            rating_threshold,
+        )
+        # data = obs_data.copy()
         model = self._setup_model(
             data, self.priors,
         )
