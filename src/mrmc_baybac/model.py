@@ -424,6 +424,7 @@ class BalancedModel(BaseModel):
         priors: Optional[dict] | Optional[str] = "diffuse",
         ):
         super().__init__(obs_data, priors)
+        self.roc_results = None #TODO: refactor as property 
     
     def _run_inference(self, rating_threshold):
         negative_data = self.obs_data[self.obs_data.truth == 0].copy()
@@ -474,8 +475,8 @@ class BalancedModel(BaseModel):
         Returns:
             dict: Contains ROC curve coordinates and AUC for each treatment setting:
                 {
-                    "0": {"fpr": [...], "tpr": [...], "auc": float},
-                    "1": {"fpr": [...], "tpr": [...], "auc": float}
+                    "0": {"fpr": [...], "tpr": [...], "auc": float, "partial_auc": float, "partial_fpr_range": (min_fpr, max_fpr)},
+                    "1": {"fpr": [...], "tpr": [...], "auc": float, "partial_auc": float, "partial_fpr_range": (min_fpr, max_fpr)}
                 }
         """
         thresholds = self.get_thresholds_from_ratings(self.obs_data.rating)
@@ -495,7 +496,8 @@ class BalancedModel(BaseModel):
         
         # Compute ROC curve and AUC
         roc_results = self._compute_roc_auc(tprs, tnrs)
-        
+        self.roc_results = roc_results # Store results as instance variable
+
         return roc_results
 
     def _compute_roc_auc(self, tprs, tnrs):
@@ -508,12 +510,14 @@ class BalancedModel(BaseModel):
         Returns:
             dict: Contains ROC curve coordinates and AUC for each treatment setting:
                 {
-                    "0": {"fpr": [...], "tpr": [...], "auc": float},
-                    "1": {"fpr": [...], "tpr": [...], "auc": float}
+                    "0": {"fpr": [...], "tpr": [...], "auc": float, "partial_auc": float},
+                    "1": {"fpr": [...], "tpr": [...], "auc": float, "partial_auc": float}
                 }
         """
         roc_results = {}
         
+        # First compute individual ROC curves
+        individual_results = {}
         for setting in ["0", "1"]:
             # Convert posterior samples to mean values
             tnr_values = [np.mean(tnr) if isinstance(tnr, np.ndarray) else tnr for tnr in tnrs[setting]]
@@ -531,10 +535,56 @@ class BalancedModel(BaseModel):
             # Compute AUC
             auc_score = auc(fpr_sorted, tpr_sorted)
             
-            roc_results[setting] = {
+            individual_results[setting] = {
                 "fpr": fpr_sorted,
                 "tpr": tpr_sorted,
                 "auc": auc_score
+            }
+        
+        # Compute partial AUC for overlapping FPR range
+        fpr_0 = np.array(individual_results["0"]["fpr"])
+        fpr_1 = np.array(individual_results["1"]["fpr"])
+        
+        # Attempt to compute partial range from discrete intersection of observed points
+        common = []
+        for val in fpr_0:
+            if np.any(np.isclose(val, fpr_1, atol=1e-6)):
+                common.append(val)
+        for val in fpr_1:
+            if np.any(np.isclose(val, fpr_0, atol=1e-6)):
+                common.append(val)
+        if len(common) >= 2:
+            fpr_min = float(np.min(common))
+            fpr_max = float(np.max(common))
+        else:
+            # fall back to numeric interval intersection
+            fpr_min = max(float(np.min(fpr_0)), float(np.min(fpr_1)))
+            fpr_max = min(float(np.max(fpr_0)), float(np.max(fpr_1)))
+        
+        for setting in ["0", "1"]:
+            fpr_vals = individual_results[setting]["fpr"]
+            tpr_vals = individual_results[setting]["tpr"]
+            
+            # Filter points within overlapping FPR range
+            overlapping_indices = [i for i, fpr_val in enumerate(fpr_vals) 
+                                 if fpr_min <= fpr_val <= fpr_max]
+            
+            if len(overlapping_indices) >= 2:
+                # Extract overlapping FPR and TPR values
+                fpr_partial = [fpr_vals[i] for i in overlapping_indices]
+                tpr_partial = [tpr_vals[i] for i in overlapping_indices]
+                
+                # Compute partial AUC
+                partial_auc = auc(fpr_partial, tpr_partial)
+            else:
+                # If insufficient overlapping points, use full AUC as fallback
+                partial_auc = individual_results[setting]["auc"]
+            
+            # Combine results
+            roc_results[setting] = {
+                **individual_results[setting],
+                "partial_auc": partial_auc,
+                "partial_fpr_range": (fpr_min, fpr_max)
             }
         
         return roc_results
@@ -643,10 +693,11 @@ class BalancedModel(BaseModel):
         return filename
 
     def plot_roc_curve_with_hdi(self, filename: str = "figures/roc_curve_with_hdi.png"):
-        """Generate and save ROC curve plot with 95% HDI band and AUC uncertainty.
+        """Generate and save ROC curve plot with 95% HDI band and partial AUC uncertainty.
         
         This function builds ROC curves by varying classification thresholds across the dataset,
-        computing posterior uncertainty for both the curve and AUC metric.
+        computing posterior uncertainty for both the curve and partial AUC metric within the
+        overlapping FPR range between treatment settings.
 
         Args:
             filename: path where the figure will be saved. The directory
@@ -655,6 +706,12 @@ class BalancedModel(BaseModel):
         Returns:
             str: path to the saved figure file.
         """
+        # Get ROC results including partial AUC
+        if self.roc_results is None:
+            self.roc_curve_analysis()
+        
+        roc_results = self.roc_results
+        
         thresholds = self.get_thresholds_from_ratings(self.obs_data.rating)
         thresholds = np.sort(thresholds)
         
@@ -682,6 +739,10 @@ class BalancedModel(BaseModel):
         
         for idx, setting in enumerate(["0", "1"]):
             ax = axes[idx]
+            
+            # Get partial AUC range for this setting
+            partial_fpr_range = roc_results[setting]["partial_fpr_range"]
+            fpr_min, fpr_max = partial_fpr_range
             
             # Stack posterior samples to get shape: (n_thresholds, n_posterior_samples)
             tprs_stacked = []
@@ -711,83 +772,66 @@ class BalancedModel(BaseModel):
             # Compute FPR for each threshold and posterior sample (FPR = 1 - TNR)
             fprs_array = 1 - tnrs_array
             
-            # For each posterior sample, compute ROC curve and AUC
-            auc_samples = []
+            # For each posterior sample, compute partial ROC curve and AUC within overlapping range
+            partial_auc_samples = []
             
             for post_idx in range(n_posteriors):
                 fpr_curve = fprs_array[:, post_idx]
                 tpr_curve = tprs_array[:, post_idx]
                 
-                # Sort by FPR for proper ROC curve
-                sorted_indices = np.argsort(fpr_curve)
-                fpr_sorted = fpr_curve[sorted_indices]
-                tpr_sorted = tpr_curve[sorted_indices]
+                # Filter points within partial FPR range
+                valid_indices = (fpr_curve >= fpr_min) & (fpr_curve <= fpr_max)
+                fpr_partial = fpr_curve[valid_indices]
+                tpr_partial = tpr_curve[valid_indices]
                 
-                # Add boundary points (0,0) if needed
-                if fpr_sorted[0] > 0 or tpr_sorted[0] > 0:
-                    fpr_sorted = np.concatenate([[0], fpr_sorted])
-                    tpr_sorted = np.concatenate([[0], tpr_sorted])
-                
-                # Add boundary point (1,1) if needed
-                if fpr_sorted[-1] < 1 or tpr_sorted[-1] < 1:
-                    fpr_sorted = np.concatenate([fpr_sorted, [1]])
-                    tpr_sorted = np.concatenate([tpr_sorted, [1]])
-                
-                # Compute AUC using trapezoidal rule
-                auc_val = auc(fpr_sorted, tpr_sorted)
-                auc_samples.append(auc_val)
+                if len(fpr_partial) >= 2:
+                    # Sort by FPR for proper ROC curve
+                    sorted_indices = np.argsort(fpr_partial)
+                    fpr_sorted = fpr_partial[sorted_indices]
+                    tpr_sorted = tpr_partial[sorted_indices]
+                    
+                    # Compute partial AUC using trapezoidal rule (within observed points only)
+                    auc_val = auc(fpr_sorted, tpr_sorted)
+                    partial_auc_samples.append(auc_val)
+                else:
+                    # Fallback to stored partial AUC if computation fails
+                    partial_auc_samples.append(roc_results[setting]["partial_auc"])
             
-            # Compute AUC statistics
-            auc_samples = np.array(auc_samples)
-            auc_mean = np.mean(auc_samples)
-            auc_hdi = az.hdi(auc_samples, hdi_prob=0.95)
+            # Compute partial AUC statistics
+            partial_auc_samples = np.array(partial_auc_samples)
+            partial_auc_mean = np.mean(partial_auc_samples)
+            partial_auc_hdi = az.hdi(partial_auc_samples, hdi_prob=0.95)
             
-            # Compute normalized AUC: normalize by the maximum possible AUC in the observed FPR range
-            # Maximum AUC occurs when TPR = 1 for all FPR points
-            fpr_min = np.min(fprs_array)
-            fpr_max = np.max(fprs_array)
-            max_possible_auc = fpr_max - fpr_min  # Area of rectangle with height 1
-            normalized_auc_samples = auc_samples / max_possible_auc if max_possible_auc > 0 else auc_samples
-            normalized_auc_mean = np.mean(normalized_auc_samples)
-            normalized_auc_hdi = az.hdi(normalized_auc_samples, hdi_prob=0.95)
-            
-            # Compute mean ROC curve by averaging FPR and TPR across posterior samples
+            # Compute mean ROC curve within partial range
             mean_fpr = np.mean(fprs_array, axis=1)
             mean_tpr = np.mean(tprs_array, axis=1)
             
-            # Sort mean curve by FPR
-            sorted_indices = np.argsort(mean_fpr)
-            mean_fpr_sorted = mean_fpr[sorted_indices]
-            mean_tpr_sorted = mean_tpr[sorted_indices]
+            # Filter mean curve to partial range and sort
+            valid_mean_indices = (mean_fpr >= fpr_min) & (mean_fpr <= fpr_max)
+            mean_fpr_sorted = np.sort(mean_fpr[valid_mean_indices])
+            mean_tpr_sorted = mean_tpr[valid_mean_indices][np.argsort(mean_fpr[valid_mean_indices])]
             
-            # Add boundary points (0,0) and (1,1) to the mean curve if needed
-            if mean_fpr_sorted[0] > 0 or mean_tpr_sorted[0] > 0:
-                mean_fpr_sorted = np.concatenate([[0], mean_fpr_sorted])
-                mean_tpr_sorted = np.concatenate([[0], mean_tpr_sorted])
+            # Plot mean ROC curve within partial range
+            if len(mean_fpr_sorted) > 0:
+                # ensure no values outside [fpr_min, fpr_max]
+                mean_fpr_sorted = np.clip(mean_fpr_sorted, fpr_min, fpr_max)
+                ax.plot(mean_fpr_sorted, mean_tpr_sorted, 'b-', linewidth=2.5, label="Mean ROC (Partial)")
             
-            if mean_fpr_sorted[-1] < 1 or mean_tpr_sorted[-1] < 1:
-                mean_fpr_sorted = np.concatenate([mean_fpr_sorted, [1]])
-                mean_tpr_sorted = np.concatenate([mean_tpr_sorted, [1]])
-            
-            # Plot mean ROC curve
-            ax.plot(mean_fpr_sorted, mean_tpr_sorted, 'b-', linewidth=2.5, label="Mean ROC")
-            
-            # Compute 95% HDI band using interpolation
-            # Collect all FPR and TPR samples for each threshold
+            # Compute 95% HDI band within partial range
             fpr_tpr_by_threshold = []
             for threshold_idx in range(len(thresholds)):
                 fpr_samples = fprs_array[threshold_idx, :]
                 tpr_samples = tprs_array[threshold_idx, :]
                 for fpr, tpr in zip(fpr_samples, tpr_samples):
-                    fpr_tpr_by_threshold.append((fpr, tpr))
+                    if fpr_min <= fpr <= fpr_max:
+                        fpr_tpr_by_threshold.append((fpr, tpr))
             
-            # Create a dense grid of FPR values from 0 to 1
-            fpr_grid = np.linspace(0, 1, 100)
+            # Create a dense grid of FPR values within partial range
+            fpr_grid = np.linspace(fpr_min, fpr_max, 100)
             tpr_lower_interp = []
             tpr_upper_interp = []
             
             # For each FPR grid point, find which thresholds give FPR values nearby
-            # and interpolate the TPR bounds
             for fpr_target in fpr_grid:
                 tpr_values_at_fpr = []
                 
@@ -817,25 +861,28 @@ class BalancedModel(BaseModel):
                 tpr_upper_valid = np.array(tpr_upper_interp)[valid_idx]
                 
                 ax.fill_between(fpr_grid_valid, tpr_lower_valid, tpr_upper_valid, 
-                               alpha=0.25, color='blue', label="95% HDI")
+                               alpha=0.25, color='blue', label="95% HDI (Partial)")
             
-            # Add diagonal reference line for random classifier
-            ax.plot([0, 1], [0, 1], 'k--', alpha=0.3, label="Random Classifier")
+            # Add diagonal reference line for random classifier (only within partial range)
+            ax.plot([fpr_min, fpr_max], [fpr_min, fpr_max], 'k--', alpha=0.3, label="Random Classifier")
+            # restrict axes to partial range explicitly
             
-            # Add AUC statistics text box
-            ax.text(0.6, 0.15, 
-                   f"AUC = {auc_mean:.3f}\n95% HDI: [{auc_hdi[0]:.3f}, {auc_hdi[1]:.3f}]\n" +
-                   f"Normalized AUC = {normalized_auc_mean:.3f}\n95% HDI: [{normalized_auc_hdi[0]:.3f}, {normalized_auc_hdi[1]:.3f}]",
+            # Add partial AUC statistics text box
+            ax.text(0.05, 0.95, 
+                   f"Partial AUC = {partial_auc_mean:.3f}\n95% HDI: [{partial_auc_hdi[0]:.3f}, {partial_auc_hdi[1]:.3f}]\n" +
+                   f"FPR Range: [{fpr_min:.3f}, {fpr_max:.3f}]",
                    fontsize=11, 
-                   bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.7))
+                   bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.7),
+                   verticalalignment='top')
             
             # Configure subplot
             ax.set_xlabel("FPR (1 - TNR)", fontsize=11)
             ax.set_ylabel("TPR", fontsize=11)
-            ax.set_title(f"ROC Curve - Treatment {setting}\n(with 95% HDI)", fontsize=12)
+            ax.set_title(f"ROC Curve - Treatment {setting}\n(Partial Range with 95% HDI)", fontsize=12)
             ax.legend(fontsize=10, loc="lower right")
             ax.grid(True, alpha=0.3)
-            ax.set_xlim([-0.05, 1.05])
+            # restrict x-axis exactly to observed overlap range
+            ax.set_xlim([fpr_min, fpr_max])
             ax.set_ylim([-0.05, 1.05])
             ax.set_aspect('equal')
         
