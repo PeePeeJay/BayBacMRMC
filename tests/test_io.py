@@ -3,6 +3,7 @@ import pandas as pd
 from pathlib import Path
 import os
 from mrmc_baybac.model import BaseModel, BalancedModel
+from mrmc_baybac.utils import get_thresholds_from_ratings
 
 
 @pytest.fixture
@@ -120,5 +121,5 @@ def test_priors_setter_dict_missing_raises(vandyke_df):
 
 def test_get_thresholds_from_ratings(vandyke_df):
     df = vandyke_df
-    tresholds = BalancedModel.get_thresholds_from_ratings(df.rating)
-    assert all([val in [0,1, 2, 3, 4] for val in tresholds])
+    thresholds = get_thresholds_from_ratings(df.rating)
+    assert all([val in [0,1, 2, 3, 4] for val in thresholds])
