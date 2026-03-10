@@ -150,6 +150,15 @@ def test_plot_tpr_tnr_by_threshold_cxr_data(cxr_df, tmp_path):
     # optional: ensure extension matches
     assert path.endswith(".png")
 
+def test_plot_tpr_tnr_by_threshold_cxr_data_informative(cxr_df, tmp_path):
+    """BalancedModel.plot_tpr_tnr_by_threshold should save a figure file."""
+    balanced_model = BalancedModel(obs_data=cxr_df, priors="informative")
+    out_file =  "./tests/.figures/tpr_tnr_by_threshold_cxr_informative.png"
+    path = balanced_model.plot_tpr_tnr_by_threshold(filename=str(out_file))
+    assert os.path.isfile(path)
+    # optional: ensure extension matches
+    assert path.endswith(".png")
+
 
 def test_plot_roc_curve_with_hdi_creates_file(vandyke_df, tmp_path):
     """BalancedModel.plot_roc_curve_with_hdi should save a figure file."""

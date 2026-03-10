@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import os
 
 from mrmc_baybac.utils import compute_posterior_effect_size, compute_posterior_accuracy_by_treatment, get_thresholds_from_ratings
-from .plotting import plot_tpr_tnr_by_threshold, plot_roc_curve_with_hdi
+from mrmc_baybac.plotting import plot_tpr_fpr_by_threshold, plot_roc_curve_with_hdi
 
 class BaseModel:
     def __init__(
@@ -24,13 +24,14 @@ class BaseModel:
         self.idata = None  # inference data
 
     @staticmethod
-    def _setup_model(obs_data, priors) -> pm.Model:
+    def _setup_model(obs_data, priors, n_cases) -> pm.Model:
         # setup coords
         reader, study_readers = obs_data.reader.factorize()
-        case, study_cases = obs_data.case.factorize()
+        # case, study_cases = obs_data.case.factorize()
         treatment = obs_data.treatment.values
 
-        coords = {"reader": study_readers, "case": study_cases}
+        # coords = {"reader": study_readers, "case": study_cases}
+        coords = {"reader": study_readers}
 
         with pm.Model(coords=coords) as model:
             treatment_idx = pm.Data(
@@ -39,9 +40,9 @@ class BaseModel:
             reader_idx = pm.Data(
                 "reader_idx", reader, dims="obs_id"
             )
-            case_idx = pm.Data(
-                "case_idx", case, dims="obs_id"
-            )
+            # case_idx = pm.Data(
+            #     "case_idx", case, dims="obs_id"
+            # )
 
             # model definition
             epsilon = 1e-2
@@ -128,7 +129,7 @@ class BaseModel:
             # likelihood
             y = pm.BetaBinomial(
                 "k",
-                n=len(obs_data.case.unique()),
+                n=n_cases,
                 alpha=a_beta,
                 beta=b_beta,
                 observed=obs_data.k,
@@ -235,7 +236,7 @@ class BaseModel:
         )
         df["rating_binary"] = df["rating"].copy().apply(
             lambda x: (
-                int(0) if x <= rating_threshold else int(1)
+                int(0) if x < rating_threshold else int(1)
             )
         )
 
@@ -244,7 +245,7 @@ class BaseModel:
 
         # Group by reader, case, and treatment to preserve case information for reader-case interactions
         result = (
-            df.groupby(["reader", "case", "treatment"])["correct"]
+            df.groupby(["reader", "treatment"])["correct"]
             .sum()
             .reset_index()
         )
@@ -381,13 +382,14 @@ class BaseModel:
         return prior_params
 
     def _run_inference(self, obs_data, rating_threshold):
+        n_cases = len(obs_data.case.unique())
         data = self.transform_obs_data(
             obs_data.copy(),
             rating_threshold,
         )
         # data = obs_data.copy()
         model = self._setup_model(
-            data, self.priors,
+            data, self.priors, n_cases
         )
 
         with model:
@@ -598,7 +600,7 @@ class BalancedModel(BaseModel):
         Returns:
             str: path to the saved figure file.
         """
-        return plot_tpr_tnr_by_threshold(self, filename)
+        return plot_tpr_fpr_by_threshold(self, filename)
 
     def plot_roc_curve_with_hdi(self, filename: str = "figures/roc_curve_with_hdi.png"):
         """Generate and save ROC curve plot with 95% HDI band and partial AUC uncertainty.

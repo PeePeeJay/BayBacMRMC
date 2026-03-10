@@ -7,7 +7,7 @@ import os
 from mrmc_baybac.utils import get_thresholds_from_ratings
 
 
-def plot_tpr_tnr_by_threshold(model, filename: str = "figures/tpr_tnr_by_threshold.png"):
+def plot_tpr_fpr_by_threshold(model, filename: str = "figures/tpr_tnr_by_threshold.png"):
     """Generate and save TPR/TNR plot with 95% HDI across thresholds.
 
     Args:
@@ -22,40 +22,40 @@ def plot_tpr_tnr_by_threshold(model, filename: str = "figures/tpr_tnr_by_thresho
     # Sort thresholds in ascending order
     thresholds = np.sort(thresholds)
     
-    tprs, tnrs = {"0": [], "1": []}, {"0": [], "1": []}
+    tprs, fprs = {"0": [], "1": []}, {"0": [], "1": []}
     
     # Collect posterior samples for all thresholds in sorted order
     for threshold in thresholds:
         tpr_dict, tnr_dict = model._compute_tpr_tnr(threshold)
         tprs["0"].append(tpr_dict["0"])
         tprs["1"].append(tpr_dict["1"])
-        tnrs["0"].append(tnr_dict["0"])
-        tnrs["1"].append(tnr_dict["1"])
+        fprs["0"].append(1 - tnr_dict["0"])
+        fprs["1"].append(1 - tnr_dict["1"])
     
     # Compute mean and HDI for each threshold and setting
     metrics = {}
     for setting in ["0", "1"]:
         means_tpr = [np.mean(s) for s in tprs[setting]]
-        means_tnr = [np.mean(s) for s in tnrs[setting]]
+        means_fpr = [np.mean(s) for s in fprs[setting]]
         
         # Compute 95% HDI (flatten posterior samples first)
         hdi_tpr = [az.hdi(s.flatten(), hdi_prob=0.95) for s in tprs[setting]]
-        hdi_tnr = [az.hdi(s.flatten(), hdi_prob=0.95) for s in tnrs[setting]]
+        hdi_fpr = [az.hdi(s.flatten(), hdi_prob=0.95) for s in fprs[setting]]
         
         # Extract lower and upper bounds as scalars
         tpr_lower = [float(hdi[0]) for hdi in hdi_tpr]
         tpr_upper = [float(hdi[1]) for hdi in hdi_tpr]
-        tnr_lower = [float(hdi[0]) for hdi in hdi_tnr]
-        tnr_upper = [float(hdi[1]) for hdi in hdi_tnr]
+        fpr_lower = [float(hdi[0]) for hdi in hdi_fpr]
+        fpr_upper = [float(hdi[1]) for hdi in hdi_fpr]
         
         metrics[setting] = {
             "thresholds": thresholds,
             "tpr_mean": means_tpr,
             "tpr_lower": tpr_lower,
             "tpr_upper": tpr_upper,
-            "tnr_mean": means_tnr,
-            "tnr_lower": tnr_lower,
-            "tnr_upper": tnr_upper,
+            "fpr_mean": means_fpr,
+            "fpr_lower": fpr_lower,
+            "fpr_upper": fpr_upper,
         }
     
     # Ensure output directory exists
@@ -80,11 +80,11 @@ def plot_tpr_tnr_by_threshold(model, filename: str = "figures/tpr_tnr_by_thresho
         )
         
         # TNR subplot
-        axes[1].plot(thresholds_x, m["tnr_mean"], marker="o", label=f"Setting {setting}")
+        axes[1].plot(thresholds_x, m["fpr_mean"], marker="o", label=f"Setting {setting}")
         axes[1].fill_between(
             thresholds_x,
-            m["tnr_lower"],
-            m["tnr_upper"],
+            m["fpr_lower"],
+            m["fpr_upper"],
             alpha=0.2
         )
     
@@ -99,8 +99,8 @@ def plot_tpr_tnr_by_threshold(model, filename: str = "figures/tpr_tnr_by_thresho
     
     # Configure TNR subplot
     axes[1].set_xlabel("Threshold Index")
-    axes[1].set_ylabel("TNR (True Negative Rate)")
-    axes[1].set_title("TNR by Threshold (with 95% HDI)")
+    axes[1].set_ylabel("FPR (False Positive Rate)")
+    axes[1].set_title("FPR by Threshold (with 95% HDI)")
     axes[1].set_xticks(range(len(thresholds)))
     axes[1].set_xticklabels([f"{t:.1f}" for t in thresholds], rotation=45)
     axes[1].legend()
