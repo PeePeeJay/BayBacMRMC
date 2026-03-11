@@ -27,10 +27,8 @@ class BaseModel:
     def _setup_model(obs_data, priors, n_cases) -> pm.Model:
         # setup coords
         reader, study_readers = obs_data.reader.factorize()
-        # case, study_cases = obs_data.case.factorize()
         treatment = obs_data.treatment.values
 
-        # coords = {"reader": study_readers, "case": study_cases}
         coords = {"reader": study_readers}
 
         with pm.Model(coords=coords) as model:
@@ -40,9 +38,6 @@ class BaseModel:
             reader_idx = pm.Data(
                 "reader_idx", reader, dims="obs_id"
             )
-            # case_idx = pm.Data(
-            #     "case_idx", case, dims="obs_id"
-            # )
 
             # model definition
             epsilon = 1e-2
@@ -84,20 +79,6 @@ class BaseModel:
             beta = pm.Deterministic(
                 "beta", mu_b + z_b * sigma_b, dims="reader"
             )
-
-            # # Reader-case interaction (non-centered)
-            # sigma_rc = pm.HalfNormal(
-            #     "sigma_rc",
-            #     1,
-            # )
-            # z_rc = pm.Normal(
-            #     "z_rc", mu=0, sigma=1, dims=("reader", "case")
-            # )
-            # reader_case_interaction = pm.Deterministic(
-            #     "reader_case_interaction",
-            #     z_rc * sigma_rc,
-            #     dims=("reader", "case"),
-            # )
 
             # overdispersion
             gamma = pm.TruncatedNormal(
@@ -618,3 +599,145 @@ class BalancedModel(BaseModel):
         """
         return plot_roc_curve_with_hdi(self, filename)
     
+
+class BalancedCaseInteractionModel(BalancedModel):
+    def __init__(
+             self,
+             obs_data: pd.DataFrame | str,
+             priors: Optional[dict] | Optional[str] = "diffuse",
+        ):
+        super().__init__(obs_data, priors)
+        self.roc_results = None #TODO: refactor as property 
+
+
+    def _setup_model(self, obs_data, priors) -> pm.Model:
+        # setup coords
+        reader, study_readers = obs_data.reader.factorize()
+        case, study_cases = obs_data.case.factorize()
+        treatment = obs_data.treatment.values
+
+        coords = {"reader": study_readers, "case": study_cases}
+        with pm.Model(coords=coords) as model:
+            treatment_idx = pm.Data(
+                "treatment_idx", treatment, dims="obs_id"
+            )
+            reader_idx = pm.Data(
+                "reader_idx", reader, dims="obs_id"
+            )
+            case_idx = pm.Data(
+                "case_idx", case, dims="obs_id"
+            )
+
+            # model definition
+            epsilon = 1e-2
+
+            ### population level parameters
+            mu_a = pm.Normal(
+                "mu_a",
+                mu=priors["a_mu"],
+                sigma=priors["a_sigma"],
+            )
+            sigma_a = pm.HalfNormal(
+                "sigma_a",
+                1,
+            )
+
+            mu_b = pm.Normal(
+                "mu_b",
+                mu=0,
+                sigma=1,
+            )
+            sigma_b = pm.HalfNormal(
+                "sigma_b",
+                1,
+            )
+
+            ### reader level parameters
+            # non-centered parameterization for intercepts
+            z_a = pm.Normal(
+                "z_a", mu=0, sigma=1, dims="reader"
+            )
+            alpha = pm.Deterministic(
+                "alpha", mu_a + z_a * sigma_a, dims="reader"
+            )
+
+            # Non-centered random slopes
+            z_b = pm.Normal(
+                "z_b", mu=0, sigma=1, dims="reader"
+            )
+            beta = pm.Deterministic(
+                "beta", mu_b + z_b * sigma_b, dims="reader"
+            )
+
+            # case variability
+            gamma_c = pm.Normal(
+                "case_variability",
+                mu=0,
+                sigma=1,
+                dims="case",
+            )
+
+            # Reader-case interaction
+            delta_rc = pm.Normal(
+                "reader_case_interaction",
+                mu=0,
+                sigma=1,
+                dims=["reader", "case"],
+            )
+
+            # probability of correct classification
+            p = pm.math.clip(
+                pm.math.invlogit(
+                    alpha[reader_idx]
+                    + beta[reader_idx] * treatment_idx
+                    + gamma_c[case_idx]
+                    + delta_rc[reader_idx, case_idx]
+                ),
+                epsilon,
+                1 - epsilon,
+            )
+        
+            # likelihood
+            y = pm.Bernoulli(
+                "k",
+                p=p,
+                observed=obs_data.rating_binary,
+                dims="obs_id",
+            )
+        return model
+
+
+    def _run_inference(self, rating_threshold):
+        df = self.obs_data.copy()
+        if rating_threshold < 0 or rating_threshold > df.rating.max():
+            raise ValueError(
+                f"Specified rating_threshold {rating_threshold}"
+                " is not a valid rating value."
+            )
+        logging.info(
+            f"Binarize rating data with rating threshold {rating_threshold}"
+        )
+        df["rating_binary"] = df["rating"].copy().apply(
+            lambda x: (
+                int(0) if x < rating_threshold else int(1)
+            )
+        )
+        negative_data = df[self.obs_data.truth == 0].copy()
+        positive_data = df[self.obs_data.truth == 1].copy()
+
+        # run inference for negative cases and positive cases seperately 
+        idatas = []
+        for data in [negative_data, positive_data]:
+            # data = obs_data.copy()
+            model = self._setup_model(
+                data, self.priors, 
+            )
+
+            with model:
+                idata = pm.sample(draws=4000)
+                pm.sample_posterior_predictive(
+                    idata, extend_inferencedata=True
+                )
+
+            idatas.append(idata)
+        return idatas

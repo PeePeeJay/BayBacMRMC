@@ -188,8 +188,3 @@ def test_plot_roc_curve_with_hdi_cxr_data_weakly_inf_priors(cxr_df, tmp_path):
     assert os.path.isfile(path)
     # optional: ensure extension matches
     assert path.endswith(".png")
-
-
-
-
-
