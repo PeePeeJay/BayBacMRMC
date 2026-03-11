@@ -9,8 +9,16 @@ from sklearn.metrics import auc
 import matplotlib.pyplot as plt
 import os
 
-from mrmc_baybac.utils import compute_posterior_effect_size, compute_posterior_accuracy_by_treatment, get_thresholds_from_ratings
-from mrmc_baybac.plotting import plot_tpr_fpr_by_threshold, plot_roc_curve_with_hdi
+from mrmc_baybac.utils import (
+    compute_posterior_effect_size,
+    compute_posterior_accuracy_by_treatment,
+    get_thresholds_from_ratings,
+)
+from mrmc_baybac.plotting import (
+    plot_tpr_fpr_by_threshold,
+    plot_roc_curve_with_hdi,
+)
+
 
 class BaseModel:
     def __init__(
@@ -207,7 +215,10 @@ class BaseModel:
         obs_data: pd.DataFrame, rating_threshold
     ) -> pd.DataFrame:
         df = obs_data.copy()
-        if rating_threshold < 0 or rating_threshold > df.rating.max():
+        if (
+            rating_threshold < 0
+            or rating_threshold > df.rating.max()
+        ):
             raise ValueError(
                 f"Specified rating_threshold {rating_threshold}"
                 " is not a valid rating value."
@@ -215,9 +226,15 @@ class BaseModel:
         logging.info(
             f"Binarize rating data with rating threshold {rating_threshold}"
         )
-        df["rating_binary"] = df["rating"].copy().apply(
-            lambda x: (
-                int(0) if x < rating_threshold else int(1)
+        df["rating_binary"] = (
+            df["rating"]
+            .copy()
+            .apply(
+                lambda x: (
+                    int(0)
+                    if x < rating_threshold
+                    else int(1)
+                )
             )
         )
 
@@ -236,13 +253,15 @@ class BaseModel:
 
         # finally map the treatment column to 0 and 1 for control and treatment group
         # find the two unique levels, sorted
-        levels = sorted(df['treatment'].unique())
+        levels = sorted(df["treatment"].unique())
 
         # make a mapping dict: first level →0, second →1
         mapping = {levels[0]: 0, levels[1]: 1}
 
         # apply it in‑place or on a copy
-        result['treatment'] = result['treatment'].copy().map(mapping)
+        result["treatment"] = (
+            result["treatment"].copy().map(mapping)
+        )
 
         return result
 
@@ -378,7 +397,7 @@ class BaseModel:
             pm.sample_posterior_predictive(
                 idata, extend_inferencedata=True
             )
-            
+
         return idata, model
 
     def summary(
@@ -404,56 +423,70 @@ class BalancedModel(BaseModel):
         self,
         obs_data: pd.DataFrame | str,
         priors: Optional[dict] | Optional[str] = "diffuse",
-        ):
+    ):
         super().__init__(obs_data, priors)
-        self.roc_results = None #TODO: refactor as property 
-    
+        self.roc_results = (
+            None  # TODO: refactor as property
+        )
+
     def _run_inference(self, rating_threshold):
-        negative_data = self.obs_data[self.obs_data.truth == 0].copy()
-        positive_data = self.obs_data[self.obs_data.truth == 1].copy()
-        
-        # run inference for negative cases and positive cases seperately 
+        negative_data = self.obs_data[
+            self.obs_data.truth == 0
+        ].copy()
+        positive_data = self.obs_data[
+            self.obs_data.truth == 1
+        ].copy()
+
+        # run inference for negative cases and positive cases seperately
         idatas = []
         for data in [negative_data, positive_data]:
             idata, model = super()._run_inference(
                 obs_data=data,
-                rating_threshold=rating_threshold
-                )
+                rating_threshold=rating_threshold,
+            )
             idatas.append(idata)
         return idatas
 
     def _compute_tpr_tnr(self, threshold):
         """Compute TPR and TNR for a given threshold.
-        
+
         Args:
             threshold: Rating threshold for binarization
-            
+
         Returns:
             tuple: (tpr_dict, tnr_dict) where each dict has keys "0" and "1" for treatment settings.
                    Each value is a posterior sample array.
         """
         idatas = self._run_inference(threshold)
-        
+
         # idatas[0] is for negative cases (truth==0), idatas[1] is for positive cases (truth==1)
         # Compute TNR (accuracy for negative cases) - posterior samples
         neg_idata = idatas[0]
         neg_a_mu = neg_idata["posterior"]["mu_a"].values
         neg_b_mu = neg_idata["posterior"]["mu_b"].values
-        neg_acc_0, neg_acc_1 = compute_posterior_accuracy_by_treatment(neg_a_mu, neg_b_mu)
-        
+        neg_acc_0, neg_acc_1 = (
+            compute_posterior_accuracy_by_treatment(
+                neg_a_mu, neg_b_mu
+            )
+        )
+
         # Compute TPR (accuracy for positive cases) - posterior samples
         pos_idata = idatas[1]
         pos_a_mu = pos_idata["posterior"]["mu_a"].values
         pos_b_mu = pos_idata["posterior"]["mu_b"].values
-        pos_acc_0, pos_acc_1 = compute_posterior_accuracy_by_treatment(pos_a_mu, pos_b_mu)
-        
+        pos_acc_0, pos_acc_1 = (
+            compute_posterior_accuracy_by_treatment(
+                pos_a_mu, pos_b_mu
+            )
+        )
+
         tnr_dict = {"0": neg_acc_0, "1": neg_acc_1}
         tpr_dict = {"0": pos_acc_0, "1": pos_acc_1}
         return tpr_dict, tnr_dict
 
     def roc_curve_analysis(self):
         """Perform ROC curve analysis across multiple thresholds.
-        
+
         Returns:
             dict: Contains ROC curve coordinates and AUC for each treatment setting:
                 {
@@ -461,34 +494,38 @@ class BalancedModel(BaseModel):
                     "1": {"fpr": [...], "tpr": [...], "auc": float, "partial_auc": float, "partial_fpr_range": (min_fpr, max_fpr)}
                 }
         """
-        thresholds = get_thresholds_from_ratings(self.obs_data.rating)
+        thresholds = get_thresholds_from_ratings(
+            self.obs_data.rating
+        )
         tprs, tnrs = {"0": [], "1": []}, {"0": [], "1": []}
-        
+
         for threshold in thresholds:
             try:
-                tpr_dict, tnr_dict = self._compute_tpr_tnr(threshold)
+                tpr_dict, tnr_dict = self._compute_tpr_tnr(
+                    threshold
+                )
             except Exception as e:
-                print(e) 
-                continue     
+                print(e)
+                continue
 
             tprs["0"].append(tpr_dict["0"])
             tprs["1"].append(tpr_dict["1"])
             tnrs["0"].append(tnr_dict["0"])
             tnrs["1"].append(tnr_dict["1"])
-        
+
         # Compute ROC curve and AUC
         roc_results = self._compute_roc_auc(tprs, tnrs)
-        self.roc_results = roc_results # Store results as instance variable
+        self.roc_results = roc_results  # Store results as instance variable
 
         return roc_results
 
     def _compute_roc_auc(self, tprs, tnrs):
         """Compute ROC curve coordinates and AUC for each treatment setting.
-        
+
         Args:
             tprs: dict with keys "0" and "1" containing lists of TPR values per threshold
             tnrs: dict with keys "0" and "1" containing lists of TNR values per threshold
-            
+
         Returns:
             dict: Contains ROC curve coordinates and AUC for each treatment setting:
                 {
@@ -497,36 +534,52 @@ class BalancedModel(BaseModel):
                 }
         """
         roc_results = {}
-        
+
         # First compute individual ROC curves
         individual_results = {}
         for setting in ["0", "1"]:
             # Convert posterior samples to mean values
-            tnr_values = [np.mean(tnr) if isinstance(tnr, np.ndarray) else tnr for tnr in tnrs[setting]]
-            tpr_values = [np.mean(tpr) if isinstance(tpr, np.ndarray) else tpr for tpr in tprs[setting]]
-            
+            tnr_values = [
+                (
+                    np.mean(tnr)
+                    if isinstance(tnr, np.ndarray)
+                    else tnr
+                )
+                for tnr in tnrs[setting]
+            ]
+            tpr_values = [
+                (
+                    np.mean(tpr)
+                    if isinstance(tpr, np.ndarray)
+                    else tpr
+                )
+                for tpr in tprs[setting]
+            ]
+
             # Compute FPR from TNR: FPR = 1 - TNR
             fpr = [1 - tnr for tnr in tnr_values]
             tpr = tpr_values
-        
+
             # Sort by FPR for proper ROC curve
-            sorted_pairs = sorted(zip(fpr, tpr), key=lambda x: x[0])
+            sorted_pairs = sorted(
+                zip(fpr, tpr), key=lambda x: x[0]
+            )
             fpr_sorted = [pair[0] for pair in sorted_pairs]
             tpr_sorted = [pair[1] for pair in sorted_pairs]
-            
+
             # Compute AUC
             auc_score = auc(fpr_sorted, tpr_sorted)
-            
+
             individual_results[setting] = {
                 "fpr": fpr_sorted,
                 "tpr": tpr_sorted,
-                "auc": auc_score
+                "auc": auc_score,
             }
-        
+
         # Compute partial AUC for overlapping FPR range
         fpr_0 = np.array(individual_results["0"]["fpr"])
         fpr_1 = np.array(individual_results["1"]["fpr"])
-        
+
         # Attempt to compute partial range from discrete intersection of observed points
         common = []
         for val in fpr_0:
@@ -540,38 +593,54 @@ class BalancedModel(BaseModel):
             fpr_max = float(np.max(common))
         else:
             # fall back to numeric interval intersection
-            fpr_min = max(float(np.min(fpr_0)), float(np.min(fpr_1)))
-            fpr_max = min(float(np.max(fpr_0)), float(np.max(fpr_1)))
-        
+            fpr_min = max(
+                float(np.min(fpr_0)), float(np.min(fpr_1))
+            )
+            fpr_max = min(
+                float(np.max(fpr_0)), float(np.max(fpr_1))
+            )
+
         for setting in ["0", "1"]:
             fpr_vals = individual_results[setting]["fpr"]
             tpr_vals = individual_results[setting]["tpr"]
-            
+
             # Filter points within overlapping FPR range
-            overlapping_indices = [i for i, fpr_val in enumerate(fpr_vals) 
-                                 if fpr_min <= fpr_val <= fpr_max]
-            
+            overlapping_indices = [
+                i
+                for i, fpr_val in enumerate(fpr_vals)
+                if fpr_min <= fpr_val <= fpr_max
+            ]
+
             if len(overlapping_indices) >= 2:
                 # Extract overlapping FPR and TPR values
-                fpr_partial = [fpr_vals[i] for i in overlapping_indices]
-                tpr_partial = [tpr_vals[i] for i in overlapping_indices]
-                
+                fpr_partial = [
+                    fpr_vals[i] for i in overlapping_indices
+                ]
+                tpr_partial = [
+                    tpr_vals[i] for i in overlapping_indices
+                ]
+
                 # Compute partial AUC
                 partial_auc = auc(fpr_partial, tpr_partial)
             else:
                 # If insufficient overlapping points, use full AUC as fallback
-                partial_auc = individual_results[setting]["auc"]
-            
+                partial_auc = individual_results[setting][
+                    "auc"
+                ]
+
             # Combine results
             roc_results[setting] = {
                 **individual_results[setting],
                 "partial_auc": partial_auc,
-                "partial_fpr_range": (fpr_min, fpr_max)
+                "partial_fpr_range": (fpr_min, fpr_max),
             }
-        
+
         return roc_results
 
-    def plot_tpr_tnr_by_threshold(self, filename: str = "figures/tpr_tnr_by_threshold.png"):
+    def plot_tpr_tnr_by_threshold(
+        self,
+        filename: str = "figures/tpr_tnr_by_threshold.png",
+    ):
         """Generate and save TPR/TNR plot with 95% HDI across thresholds.
 
         Args:
@@ -583,9 +652,12 @@ class BalancedModel(BaseModel):
         """
         return plot_tpr_fpr_by_threshold(self, filename)
 
-    def plot_roc_curve_with_hdi(self, filename: str = "figures/roc_curve_with_hdi.png"):
+    def plot_roc_curve_with_hdi(
+        self,
+        filename: str = "figures/roc_curve_with_hdi.png",
+    ):
         """Generate and save ROC curve plot with 95% HDI band and partial AUC uncertainty.
-        
+
         This function builds ROC curves by varying classification thresholds across the dataset,
         computing posterior uncertainty for both the curve and partial AUC metric within the
         overlapping FPR range between treatment settings.
@@ -598,17 +670,18 @@ class BalancedModel(BaseModel):
             str: path to the saved figure file.
         """
         return plot_roc_curve_with_hdi(self, filename)
-    
+
 
 class BalancedCaseInteractionModel(BalancedModel):
     def __init__(
-             self,
-             obs_data: pd.DataFrame | str,
-             priors: Optional[dict] | Optional[str] = "diffuse",
-        ):
+        self,
+        obs_data: pd.DataFrame | str,
+        priors: Optional[dict] | Optional[str] = "diffuse",
+    ):
         super().__init__(obs_data, priors)
-        self.roc_results = None #TODO: refactor as property 
-
+        self.roc_results = (
+            None  # TODO: refactor as property
+        )
 
     def _setup_model(self, obs_data, priors) -> pm.Model:
         # setup coords
@@ -616,7 +689,10 @@ class BalancedCaseInteractionModel(BalancedModel):
         case, study_cases = obs_data.case.factorize()
         treatment = obs_data.treatment.values
 
-        coords = {"reader": study_readers, "case": study_cases}
+        coords = {
+            "reader": study_readers,
+            "case": study_cases,
+        }
         with pm.Model(coords=coords) as model:
             treatment_idx = pm.Data(
                 "treatment_idx", treatment, dims="obs_id"
@@ -696,7 +772,7 @@ class BalancedCaseInteractionModel(BalancedModel):
                 epsilon,
                 1 - epsilon,
             )
-        
+
             # likelihood
             y = pm.Bernoulli(
                 "k",
@@ -706,10 +782,12 @@ class BalancedCaseInteractionModel(BalancedModel):
             )
         return model
 
-
     def _run_inference(self, rating_threshold):
         df = self.obs_data.copy()
-        if rating_threshold < 0 or rating_threshold > df.rating.max():
+        if (
+            rating_threshold < 0
+            or rating_threshold > df.rating.max()
+        ):
             raise ValueError(
                 f"Specified rating_threshold {rating_threshold}"
                 " is not a valid rating value."
@@ -717,20 +795,27 @@ class BalancedCaseInteractionModel(BalancedModel):
         logging.info(
             f"Binarize rating data with rating threshold {rating_threshold}"
         )
-        df["rating_binary"] = df["rating"].copy().apply(
-            lambda x: (
-                int(0) if x < rating_threshold else int(1)
+        df["rating_binary"] = (
+            df["rating"]
+            .copy()
+            .apply(
+                lambda x: (
+                    int(0)
+                    if x < rating_threshold
+                    else int(1)
+                )
             )
         )
         negative_data = df[self.obs_data.truth == 0].copy()
         positive_data = df[self.obs_data.truth == 1].copy()
 
-        # run inference for negative cases and positive cases seperately 
+        # run inference for negative cases and positive cases seperately
         idatas = []
         for data in [negative_data, positive_data]:
             # data = obs_data.copy()
             model = self._setup_model(
-                data, self.priors, 
+                data,
+                self.priors,
             )
 
             with model:

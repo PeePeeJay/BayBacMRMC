@@ -17,10 +17,12 @@ def vandyke_df(vandyke_csv_path):
     """Provides the vandyke.csv data as a pandas DataFrame."""
     return pd.read_csv(vandyke_csv_path)
 
+
 @pytest.fixture
 def cxr_df():
     """Provides the vandyke.csv data as a pandas DataFrame."""
     return pd.read_csv("data/cxr_bsi_mrmc.csv")
+
 
 @pytest.fixture
 def vandyke_df_invalid(vandyke_csv_path):
@@ -118,8 +120,9 @@ def test_priors_setter_dict_missing_raises(vandyke_df):
         m = BaseModel(obs_data=df, priors=priors_incomplete)
 
 
-
 def test_get_thresholds_from_ratings(vandyke_df):
     df = vandyke_df
     thresholds = get_thresholds_from_ratings(df.rating)
-    assert all([val in [0,1, 2, 3, 4] for val in thresholds])
+    assert all(
+        [val in [0, 1, 2, 3, 4] for val in thresholds]
+    )
