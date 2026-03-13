@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 import pytest
-from mrmc_baybac.simulation import simulate_aggregated_data, mock_reading_data
+from mrmc_baybac.simulation import (
+    simulate_aggregated_data,
+    mock_reading_data,
+    simulate_case_data,
+    mock_case_reading_data,
+)
 
 EXPECTED_KEYS = {"k", "alpha", "beta", "p", "a_beta", "b_beta"}
 
@@ -156,3 +161,121 @@ class TestMockReadingData:
                 mask = (pos["reader"] == reader) & (pos["treatment"] == treatment)
                 n_correct = (pos.loc[mask, "rating"] == 1).sum()
                 assert n_correct == positive_sim_data["k"][reader, treatment]
+
+
+CASE_TRUE_PARAMS = {
+    "mu_a": 1.0,
+    "sigma_a": 0.5,
+    "mu_b": 0.5,
+    "sigma_b": 0.3,
+    "sigma_gamma": 1.0,
+    "sigma_delta": 0.5,
+}
+
+
+@pytest.fixture
+def negative_case_sim_data():
+    return simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+
+
+@pytest.fixture
+def positive_case_sim_data():
+    return simulate_case_data(n_readers=3, n_cases=4, true_params=CASE_TRUE_PARAMS)
+
+
+class TestSimulateCaseData:
+    def test_returns_dict(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert isinstance(result, dict)
+
+    def test_has_expected_keys(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert {"n_readers", "n_cases", "alpha", "beta", "gamma_c", "delta_rc", "p"}.issubset(result.keys())
+
+    def test_alpha_shape(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert result["alpha"].shape == (3,)
+
+    def test_beta_shape(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert result["beta"].shape == (3,)
+
+    def test_gamma_c_shape(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert result["gamma_c"].shape == (5,)
+
+    def test_delta_rc_shape(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert result["delta_rc"].shape == (3, 5)
+
+    def test_p_shape(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert result["p"].shape == (3, 5, 2)
+
+    def test_p_in_unit_interval(self):
+        result = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS)
+        assert (result["p"] > 0).all()
+        assert (result["p"] < 1).all()
+
+    def test_reproducible_with_same_rng(self):
+        r1 = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS, rng=np.random.default_rng(0))
+        r2 = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS, rng=np.random.default_rng(0))
+        np.testing.assert_array_equal(r1["p"], r2["p"])
+
+    def test_different_rng_produces_different_p(self):
+        r1 = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS, rng=np.random.default_rng(1))
+        r2 = simulate_case_data(n_readers=3, n_cases=5, true_params=CASE_TRUE_PARAMS, rng=np.random.default_rng(2))
+        assert not np.array_equal(r1["p"], r2["p"])
+
+
+CASE_READING_EXPECTED_COLUMNS = {"reader", "case", "treatment", "rating", "truth"}
+
+
+class TestMockCaseReadingData:
+    def test_returns_dataframe(self, negative_case_sim_data, positive_case_sim_data):
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert isinstance(result, pd.DataFrame)
+
+    def test_has_expected_columns(self, negative_case_sim_data, positive_case_sim_data):
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert CASE_READING_EXPECTED_COLUMNS.issubset(result.columns)
+
+    def test_row_count(self, negative_case_sim_data, positive_case_sim_data):
+        n_readers = negative_case_sim_data["n_readers"]
+        n_cases_neg = negative_case_sim_data["n_cases"]
+        n_cases_pos = positive_case_sim_data["n_cases"]
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert len(result) == 2 * n_readers * (n_cases_neg + n_cases_pos)
+
+    def test_ratings_are_binary(self, negative_case_sim_data, positive_case_sim_data):
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert set(result["rating"].unique()).issubset({0, 1})
+
+    def test_truth_values(self, negative_case_sim_data, positive_case_sim_data):
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert set(result["truth"].unique()) == {0, 1}
+
+    def test_negative_case_indices(self, negative_case_sim_data, positive_case_sim_data):
+        """Negative cases are numbered 0..n_cases_neg-1."""
+        n_cases_neg = negative_case_sim_data["n_cases"]
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        neg_cases = result.loc[result["truth"] == 0, "case"]
+        assert set(neg_cases.unique()) == set(range(n_cases_neg))
+
+    def test_positive_case_indices(self, negative_case_sim_data, positive_case_sim_data):
+        """Positive cases are numbered n_cases_neg..n_cases_neg+n_cases_pos-1."""
+        n_cases_neg = negative_case_sim_data["n_cases"]
+        n_cases_pos = positive_case_sim_data["n_cases"]
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        pos_cases = result.loc[result["truth"] == 1, "case"]
+        assert set(pos_cases.unique()) == set(range(n_cases_neg, n_cases_neg + n_cases_pos))
+
+    def test_reader_values_in_range(self, negative_case_sim_data, positive_case_sim_data):
+        n_readers = negative_case_sim_data["n_readers"]
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert set(result["reader"].unique()) == set(range(n_readers))
+
+    def test_treatment_values(self, negative_case_sim_data, positive_case_sim_data):
+        result = mock_case_reading_data(negative_case_sim_data, positive_case_sim_data)
+        assert set(result["treatment"].unique()) == {0, 1}
+
