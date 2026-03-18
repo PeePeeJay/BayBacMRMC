@@ -217,7 +217,7 @@ class BaseModel:
         df = obs_data.copy()
         if (
             rating_threshold < 0
-            or rating_threshold > df.rating.max()
+            # or rating_threshold > df.rating.max()
         ):
             raise ValueError(
                 f"Specified rating_threshold {rating_threshold}"
@@ -381,7 +381,7 @@ class BaseModel:
             }
         return prior_params
 
-    def _run_inference(self, obs_data, rating_threshold):
+    def run_inference(self, obs_data, rating_threshold):
         n_cases = len(obs_data.case.unique())
         data = self.transform_obs_data(
             obs_data.copy(),
@@ -429,7 +429,7 @@ class BalancedModel(BaseModel):
             None  # TODO: refactor as property
         )
 
-    def _run_inference(self, rating_threshold):
+    def run_inference(self, rating_threshold=0.5):
         negative_data = self.obs_data[
             self.obs_data.truth == 0
         ].copy()
@@ -440,7 +440,7 @@ class BalancedModel(BaseModel):
         # run inference for negative cases and positive cases seperately
         idatas = []
         for data in [negative_data, positive_data]:
-            idata, model = super()._run_inference(
+            idata, model = super().run_inference(
                 obs_data=data,
                 rating_threshold=rating_threshold,
             )
@@ -457,7 +457,7 @@ class BalancedModel(BaseModel):
             tuple: (tpr_dict, tnr_dict) where each dict has keys "0" and "1" for treatment settings.
                    Each value is a posterior sample array.
         """
-        idatas = self._run_inference(threshold)
+        idatas = self.run_inference(threshold)
 
         # idatas[0] is for negative cases (truth==0), idatas[1] is for positive cases (truth==1)
         # Compute TNR (accuracy for negative cases) - posterior samples
@@ -782,7 +782,7 @@ class BalancedCaseInteractionModel(BalancedModel):
             )
         return model
 
-    def _run_inference(self, rating_threshold):
+    def run_inference(self, rating_threshold=0.5):
         df = self.obs_data.copy()
         if (
             rating_threshold < 0

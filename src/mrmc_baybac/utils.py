@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 
 def invlogit(x):
@@ -46,3 +47,46 @@ def get_thresholds_from_ratings(
     else:
         thresholds = ratings.unique()
     return thresholds
+
+
+# ---------------------------------------------------------------------------
+# Step 4 helper: empirical balanced accuracy
+# ---------------------------------------------------------------------------
+
+
+def compute_empirical_ba(
+    data: pd.DataFrame,
+) -> pd.DataFrame:
+    """Compute empirical balanced accuracy per treatment from binary case-level ratings.
+
+    BA = 0.5 * (TPR + TNR)
+
+    Args:
+        data: DataFrame with columns reader, case, treatment, rating, truth.
+              rating and truth are expected to be binary (0/1).
+
+    Returns:
+        DataFrame with columns treatment and emp_balanced_accuracy.
+    """
+    records = []
+    for treatment in sorted(data["treatment"].unique()):
+        subset = data[data["treatment"] == treatment]
+        neg = subset[subset["truth"] == 0]
+        pos = subset[subset["truth"] == 1]
+        tnr = (
+            (neg["rating"] == 0).mean()
+            if len(neg) > 0
+            else np.nan
+        )
+        tpr = (
+            (pos["rating"] == 1).mean()
+            if len(pos) > 0
+            else np.nan
+        )
+        records.append(
+            {
+                "treatment": int(treatment),
+                "emp_balanced_accuracy": 0.5 * (tpr + tnr),
+            }
+        )
+    return pd.DataFrame(records)

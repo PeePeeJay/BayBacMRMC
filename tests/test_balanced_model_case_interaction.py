@@ -146,7 +146,7 @@ def test_balanced_case_interaction_run_inference_returns_list_of_idatas(
     model = BalancedCaseInteractionModel(
         obs_data=vandyke_df
     )
-    idatas = model._run_inference(rating_threshold=3)
+    idatas = model.run_inference(rating_threshold=3)
     assert isinstance(idatas, list)
     assert len(idatas) == 2
 
@@ -158,7 +158,7 @@ def test_balanced_case_interaction_run_inference_idata_has_required_groups(
     model = BalancedCaseInteractionModel(
         obs_data=vandyke_df
     )
-    idatas = model._run_inference(rating_threshold=3)
+    idatas = model.run_inference(rating_threshold=3)
     for idata in idatas:
         assert "posterior" in idata.keys()
         assert "posterior_predictive" in idata.keys()
@@ -171,7 +171,7 @@ def test_balanced_case_interaction_run_inference_posterior_has_population_params
     model = BalancedCaseInteractionModel(
         obs_data=vandyke_df
     )
-    idatas = model._run_inference(rating_threshold=3)
+    idatas = model.run_inference(rating_threshold=3)
     for idata in idatas:
         assert "mu_a" in idata["posterior"]
         assert "mu_b" in idata["posterior"]

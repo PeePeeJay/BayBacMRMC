@@ -8,7 +8,7 @@ def test__run_inference_with_default_priors(vandyke_df):
     rating_threshold = 3
     m = BaseModel(obs_data=obs_data)
 
-    idata, model = m._run_inference(
+    idata, model = m.run_inference(
         obs_data=obs_data, rating_threshold=rating_threshold
     )
     assert "posterior" in idata.keys()
@@ -21,7 +21,7 @@ def test_balanced_model_run_inference(vandyke_df):
     rating_threshold = 3
 
     balanced_model = BalancedModel(obs_data=obs_data)
-    idatas = balanced_model._run_inference(
+    idatas = balanced_model.run_inference(
         rating_threshold=rating_threshold
     )
 
