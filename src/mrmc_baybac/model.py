@@ -216,7 +216,8 @@ class BaseModel:
     ) -> pd.DataFrame:
         df = obs_data.copy()
         if (
-            rating_threshold < 0
+            rating_threshold
+            < 0
             # or rating_threshold > df.rating.max()
         ):
             raise ValueError(

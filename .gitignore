@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# psa output files
+
+
+# pkl files
+*.pkl
 # C extensions
 *.so
 
@@ -211,6 +216,7 @@ __marimo__/
 *.png
 *.jpg
 tests/.figures/
+tests/psa_output/
 
 # vscode settings
 .vscode/

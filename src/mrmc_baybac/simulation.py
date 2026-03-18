@@ -7,7 +7,12 @@ RNG = np.random.default_rng(42)
 
 
 def simulate_aggregated_data(
-    n_readers, n_cases, true_params, mu_baseline=None, effect_size=None, rng=None
+    n_readers,
+    n_cases,
+    true_params,
+    mu_baseline=None,
+    effect_size=None,
+    rng=None,
 ):
     """Simulate Beta-Binomial reading data for a full factorial (reader x setting) design.
 
@@ -28,7 +33,7 @@ def simulate_aggregated_data(
         mu_b = true_params["mu_b"]
         sigma_b = true_params["sigma_b"]
     gamma = true_params["gamma"]
-    
+
     # --- reader-level random effects ---
     z_a = rng.normal(0, 1, size=n_readers)
     z_b = rng.normal(0, 1, size=n_readers)

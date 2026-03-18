@@ -3,8 +3,13 @@ import arviz as az
 from sklearn.metrics import auc
 import matplotlib.pyplot as plt
 import os
+import pickle
 
-from mrmc_baybac.utils import get_thresholds_from_ratings
+from mrmc_baybac.utils import (
+    get_simulation_configs,
+    get_thresholds_from_ratings,
+    read_psa_estimates_from_directory,
+)
 
 
 def plot_tpr_fpr_by_threshold(
@@ -409,3 +414,27 @@ def plot_roc_curve_with_hdi(
     fig.savefig(filename, dpi=100)
     plt.close()
     return filename
+
+
+def psa_result(
+    path: str,
+    n_readers_sim: list | None = None,
+    priors_options: list | None = None,
+    case_interaction: bool = False,
+) -> plt.figure:
+    """Load and return a PSA result figure from the specified path."""
+    if not os.path.isdir(path):
+        raise FileNotFoundError(
+            f"Specified path is not a directory: {path}"
+        )
+
+    # load simulation config
+    sim_config = get_simulation_configs(path)
+
+
+    simulation_results = read_psa_estimates_from_directory(
+        path, case_interaction=case_interaction
+    )
+    
+    fig = plt.subplots(figsize=(8, 6))
+    return fig
