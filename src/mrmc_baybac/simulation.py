@@ -7,67 +7,63 @@ RNG = np.random.default_rng(42)
 
 
 def simulate_aggregated_data(
-    n_readers,
-    n_cases,
-    true_params,
-    mu_baseline=None,
-    effect_size=None,
-    rng=None,
-):
-    """Simulate Beta-Binomial reading data for a full factorial (reader x setting) design.
+        n_readers,
+        n_cases,
+        gamma,
+        mu_baseline=None,
+        effect_size=None,
+        rng=None,
+    ):
+    data = pd.DataFrame()
+    for setting in [0, 1]:
+        with pm.Model() as model:
+            gamma = gamma
 
-    Returns arrays indexed by [reader, setting] where setting 0 is baseline
-    and setting 1 is treatment.
-    """
-    if rng is None:
-        rng = np.random.default_rng(123)
+            a = pm.math.logit(mu_baseline)
+            b = pm.math.logit(mu_baseline + effect_size) - a
+            mu = pm.Deterministic(
+                "p", pm.math.invlogit(a + b * setting)
+            )
 
-    if mu_baseline is not None and effect_size is not None:
-        mu_a = logit(mu_baseline)
-        mu_b = logit(mu_baseline + effect_size) - mu_a
-        sigma_a, sigma_b = 1.0, 1.0
-    else:
-        # --- unpack true parameters ---
-        mu_a = true_params["mu_a"]
-        sigma_a = true_params["sigma_a"]
-        mu_b = true_params["mu_b"]
-        sigma_b = true_params["sigma_b"]
-    gamma = true_params["gamma"]
+            # population level parameters
+            k = (1 - mu) / mu
+            alpha = pm.Deterministic(
+                "alpha", (1 - gamma) / (gamma * (1 + k))
+            )
+            beta = pm.Deterministic(
+                "beta", k * (1 - gamma) / (gamma * (1 + k))
+            )
 
-    # --- reader-level random effects ---
-    z_a = rng.normal(0, 1, size=n_readers)
-    z_b = rng.normal(0, 1, size=n_readers)
+            p = pm.Beta(
+                "success probability",
+                alpha,
+                beta,
+                size=n_readers,
+            )
+            k = pm.Binomial("succeces", n_cases, p)
+            ks = pm.draw(k, draws=1, random_seed=rng)
+            ps = pm.draw(p, draws=1, random_seed=rng)
+        data_ = pd.DataFrame(
+            {
+                "Setting": setting,
+                "k": ks,
+                "p": ps,
+                "Reader": np.arange(n_readers),
+            }
+        )
+        data = pd.concat([data, data_])
 
-    alpha = mu_a + z_a * sigma_a  # shape (n_readers,)
-    beta = mu_b + z_b * sigma_b  # shape (n_readers,)
-
-    # --- linear predictor: shape (n_readers, 2) ---
-    settings = np.array([0, 1])
-    eta = (
-        alpha[:, np.newaxis]
-        + beta[:, np.newaxis] * settings
-    )
-
-    p = expit(eta)
-
-    # --- Beta-Binomial parameters ---
-    kappa = (1 - p) / p
-    a_beta = (1 - gamma) / (gamma * (1 + kappa))
-    b_beta = kappa * (1 - gamma) / (gamma * (1 + kappa))
-
-    # --- draw outcomes: shape (n_readers, 2) ---
-    k = rng.beta(a_beta, b_beta)  # draw latent probability
-    k = rng.binomial(n_cases, k)  # convert to counts
-
+    k = np.empty((n_readers, 2), dtype=int) 
+    for reader_idx in range(n_readers):
+        for setting in [0, 1]:
+            k[reader_idx, setting] = data.loc[
+                (data["Reader"] == reader_idx) & (data["Setting"] == setting),
+                "k",
+            ].values[0]
     return {
         "n_readers": n_readers,
         "n_cases": n_cases,
         "k": k,
-        "alpha": alpha,
-        "beta": beta,
-        "p": p,
-        "a_beta": a_beta,
-        "b_beta": b_beta,
     }
 
 
@@ -97,31 +93,34 @@ def mock_reading_data(
         negative_sim_data["n_cases"],
     )
     neg_records["truth"] = 0
+    n_cases_neg = negative_sim_data["n_cases"]
     for reader in range(negative_sim_data["n_readers"]):
         reader = int(reader)
         for treatment in [0, 1]:
             treatment = int(treatment)
+            n_correct = int(
+                negative_sim_data["k"][reader, treatment]
+            )
+            if not 0 <= n_correct <= n_cases_neg:
+                raise ValueError(
+                    "Expected k in [0, n_cases] for negative data, "
+                    f"got k={n_correct}, n_cases={n_cases_neg}."
+                )
+
+            # truth=0: correct classification is rating=0
+            ratings = np.concatenate(
+                [
+                    np.zeros(n_correct, dtype=int),
+                    np.ones(
+                        n_cases_neg - n_correct, dtype=int
+                    ),
+                ]
+            )
             neg_records.loc[
                 (neg_records["reader"] == reader)
                 & (neg_records["treatment"] == treatment),
                 "rating",
-            ] = np.concatenate(
-                [
-                    np.tile(
-                        0,
-                        negative_sim_data["k"][reader][
-                            treatment
-                        ],
-                    ),
-                    np.tile(
-                        1,
-                        negative_sim_data["n_cases"]
-                        - negative_sim_data["k"][reader][
-                            treatment
-                        ],
-                    ),
-                ]
-            )
+            ] = ratings
 
     pos_records = pd.DataFrame(
         columns=[
@@ -145,31 +144,34 @@ def mock_reading_data(
         positive_sim_data["n_cases"],
     )
     pos_records["truth"] = 1
+    n_cases_pos = positive_sim_data["n_cases"]
     for reader in range(positive_sim_data["n_readers"]):
         reader = int(reader)
         for treatment in [0, 1]:
             treatment = int(treatment)
+            n_correct = int(
+                positive_sim_data["k"][reader, treatment]
+            )
+            if not 0 <= n_correct <= n_cases_pos:
+                raise ValueError(
+                    "Expected k in [0, n_cases] for positive data, "
+                    f"got k={n_correct}, n_cases={n_cases_pos}."
+                )
+
+            # truth=1: correct classification is rating=1
+            ratings = np.concatenate(
+                [
+                    np.ones(n_correct, dtype=int),
+                    np.zeros(
+                        n_cases_pos - n_correct, dtype=int
+                    ),
+                ]
+            )
             pos_records.loc[
                 (pos_records["reader"] == reader)
                 & (pos_records["treatment"] == treatment),
                 "rating",
-            ] = np.concatenate(
-                [
-                    np.tile(
-                        1,
-                        positive_sim_data["k"][reader][
-                            treatment
-                        ],
-                    ),
-                    np.tile(
-                        0,
-                        positive_sim_data["n_cases"]
-                        - positive_sim_data["k"][reader][
-                            treatment
-                        ],
-                    ),
-                ]
-            )
+            ] = ratings
     records = pd.concat(
         [neg_records, pos_records], ignore_index=True
     )
@@ -179,7 +181,8 @@ def mock_reading_data(
 def simulate_case_data(
     n_readers,
     n_cases,
-    true_params,
+    mu_baseline=None,
+    effect_size=None,
     rng=None,
 ):
     """Simulate case-level Bernoulli reading data with reader, case, and interaction effects.
@@ -202,31 +205,21 @@ def simulate_case_data(
 
     epsilon = 1e-2
 
-    mu_a = true_params["mu_a"]
-    sigma_a = true_params["sigma_a"]
-    mu_b = true_params["mu_b"]
-    sigma_b = true_params["sigma_b"]
-    sigma_gamma = true_params.get("sigma_gamma", 1.0)
-    sigma_delta = true_params.get("sigma_delta", 1.0)
-
-    z_a = rng.normal(0, 1, size=n_readers)
-    z_b = rng.normal(0, 1, size=n_readers)
-    alpha = mu_a + z_a * sigma_a  # (n_readers,)
-    beta = mu_b + z_b * sigma_b  # (n_readers,)
+    mu_a = logit(mu_baseline)
+    mu_b = logit(mu_baseline + effect_size) - logit(mu_baseline)
 
     gamma_c = rng.normal(
-        0, sigma_gamma, size=n_cases
+        0, 1.0, size=n_cases
     )  # (n_cases,)
     delta_rc = rng.normal(
-        0, sigma_delta, size=(n_readers, n_cases)
+        0, 0.5, size=(n_readers, n_cases)
     )  # (n_readers, n_cases)
 
     settings = np.array([0, 1])
     # broadcast to (n_readers, n_cases, 2)
     eta = (
-        alpha[:, np.newaxis, np.newaxis]
-        + beta[:, np.newaxis, np.newaxis]
-        * settings[np.newaxis, np.newaxis, :]
+        mu_a
+        + mu_b * settings[np.newaxis, np.newaxis, :]
         + gamma_c[np.newaxis, :, np.newaxis]
         + delta_rc[:, :, np.newaxis]
     )
@@ -235,8 +228,8 @@ def simulate_case_data(
     return {
         "n_readers": n_readers,
         "n_cases": n_cases,
-        "alpha": alpha,
-        "beta": beta,
+        "mu_a": mu_a,
+        "mu_b": mu_b,
         "gamma_c": gamma_c,
         "delta_rc": delta_rc,
         "p": p,

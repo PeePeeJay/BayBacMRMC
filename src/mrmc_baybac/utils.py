@@ -318,8 +318,121 @@ def read_psa_estimates_from_directory(
             vectorize=True,
         )
 
+    simulation_results = add_metrics_to_results(simulation_results, sim_config, case_interaction=case_interaction)
+
     return simulation_results
 
+
+def add_metrics_to_results(simulation_results: xr.Dataset, sim_config: dict, case_interaction: bool = False) -> xr.Dataset:
+    true_mu_a = sim_config["true_params"]["mu_a"]
+    true_mu_b = sim_config["true_params"]["mu_b"]
+    
+    true_slope = expit(true_mu_b)
+    true_intercept = expit(true_mu_a)
+
+    simulation_results["intercept_bayes"] = xr.apply_ufunc(
+    balanced_accuracy_at_baseline, simulation_results["mu_a"], simulation_results["mu_b"]
+    )
+    simulation_results["slope_bayes"] = xr.apply_ufunc(
+        effect_size, simulation_results["mu_a"], simulation_results["mu_b"]
+    )
+    simulation_results["slope_bayes_abs_error"] = xr.apply_ufunc(
+        compute_absolute_error,
+        simulation_results["slope_bayes"],
+        true_slope,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["slope_bayes_bias"] = xr.apply_ufunc(
+        compute_percent_bias,
+        simulation_results["slope_bayes"],
+        true_slope,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["intercept_bayes_abs_error"] = xr.apply_ufunc(
+        compute_absolute_error,
+        simulation_results["intercept_bayes"],
+        true_intercept,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["intercept_bayes_bias"] = xr.apply_ufunc(
+        compute_percent_bias,
+        simulation_results["intercept_bayes"],
+        true_intercept,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["slope_freq_abs_error"] = xr.apply_ufunc(
+        compute_absolute_error,
+        simulation_results["slope_freq"],
+        true_slope,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["slope_freq_bias"] = xr.apply_ufunc(
+        compute_percent_bias,
+        simulation_results["slope_freq"],
+        true_slope,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["intercept_freq_abs_error"] = xr.apply_ufunc(
+        compute_absolute_error,
+        simulation_results["intercept_freq"],
+        true_intercept,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+    simulation_results["intercept_freq_bias"] = xr.apply_ufunc(
+        compute_percent_bias,
+        simulation_results["intercept_freq"],
+        true_intercept,
+        input_core_dims=[["replicate"], []],
+        output_core_dims=[["replicate"]],
+        vectorize=True,
+    )
+
+    if not case_interaction:
+        simulation_results["overdispersion_abs_error"] = xr.apply_ufunc(
+            compute_absolute_error,
+            simulation_results["gamma"],
+            simulation_results["overdispersion"],
+            input_core_dims=[["replicate"], []],
+            output_core_dims=[["replicate"]],
+            vectorize=True,
+        )
+        simulation_results["overdispersion_bias"] = xr.apply_ufunc(
+            compute_percent_bias,
+            simulation_results["gamma"],
+            simulation_results["overdispersion"],
+            input_core_dims=[["replicate"], []],
+            output_core_dims=[["replicate"]],
+            vectorize=True,
+        )
+        simulation_results["overdispersion_se"] = xr.apply_ufunc(
+            compute_se,
+            simulation_results["gamma"],
+            simulation_results["overdispersion"],
+            input_core_dims=[["replicate"], []],
+            output_core_dims=[["replicate"]],
+            vectorize=True,
+        )
+
+    # cast data variable to float
+    for variable in simulation_results.data_vars:
+        if simulation_results[variable].dtype == object:
+            simulation_results[variable] = simulation_results[variable].astype(float)
+        
+    return simulation_results
 
 def average_posterior_pair(neg_value, pos_value):
         if neg_value is None or pos_value is None:
@@ -329,7 +442,7 @@ def average_posterior_pair(neg_value, pos_value):
 def balanced_accuracy_at_baseline(a, b):
     a = a.astype(float)
     b = b.astype(float)
-    eta = a + b * (-0.5)
+    eta = a 
     ba = expit(eta)
     return ba
 
@@ -338,7 +451,7 @@ def effect_size(a, b):
     a = a.astype(float)
     b = b.astype(float)
     ba_baseline = balanced_accuracy_at_baseline(a, b)
-    eta_intervention = a + b * (0.5)
+    eta_intervention = a + b * 1
     ba_intervention = expit(eta_intervention)
     return ba_intervention - ba_baseline
 
@@ -364,21 +477,35 @@ def compute_percent_bias(estimates, true_value):
 
 
 def get_plot_values(
-    results: xr.Dataset, var_name: str, metric: str, gamma: float, prior: str
+    results: xr.Dataset, var_name: str, metric: str, prior: str, case_interaction: bool = False, gamma: float | bool = None, 
 ):
-    df_mean = (
-        results[[f"{var_name}_{metric}"]]
-        .sel(overdispersion=gamma, priors=prior)
-        .mean("replicate")
-        .to_dataframe()
-    )
-    df_std = (
-        results[[f"{var_name}_{metric}"]]
-        .sel(overdispersion=gamma, priors=prior)
-        .std("replicate")
-        .to_dataframe()
-    )
-    x = df_mean.index.get_level_values("size").unique().values
+    if case_interaction:
+        df_mean = (
+            results[[f"{var_name}_{metric}"]]
+            .sel(priors=prior)
+            .mean("replicate")
+            .to_dataframe()
+        )
+        df_std = (
+            results[[f"{var_name}_{metric}"]]
+            .sel(priors=prior)
+            .std("replicate")
+            .to_dataframe()
+        )
+    else:
+        df_mean = (
+            results[[f"{var_name}_{metric}"]]
+            .sel(overdispersion=gamma, priors=prior)
+            .mean("replicate")
+            .to_dataframe()
+        )
+        df_std = (
+            results[[f"{var_name}_{metric}"]]
+            .sel(overdispersion=gamma, priors=prior)
+            .std("replicate")
+            .to_dataframe()
+        )
+    x = df_mean.index.get_level_values("num_readers").unique().values
     y = df_mean.loc[:, f"{var_name}_{metric}"]
     y_err = df_std.loc[:, f"{var_name}_{metric}"].values
     return x, y, y_err

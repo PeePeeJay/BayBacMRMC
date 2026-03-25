@@ -220,3 +220,6 @@ tests/psa_output/
 
 # vscode settings
 .vscode/
+
+# notebooks
+.notebooks/

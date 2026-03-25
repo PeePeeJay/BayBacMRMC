@@ -22,6 +22,8 @@ import pandas as pd
 import pymc as pm
 import statsmodels.formula.api as smf
 from tqdm import tqdm
+from scipy.special import logit, expit
+
 
 from mrmc_baybac.model import (
     BalancedModel,
@@ -47,22 +49,19 @@ def run_model_inference(
     case_interaction: bool = False,
     rng=None,
 ) -> list:
-    model = (
-        BalancedCaseInteractionModel(
-            obs_data=data, priors=priors
-        )
-        if case_interaction
-        else BalancedModel(obs_data=data, priors=priors)
-    )
+    if case_interaction:
+      
+        model = BalancedCaseInteractionModel(obs_data=data, priors=priors)
+    else:
+        BalancedModel(obs_data=data, priors=priors)
     return model.run_inference()
 
 
-# ---------------------------------------------------------------------------
-# Main PSA function (Steps 1–5)
-# ---------------------------------------------------------------------------
-
-
 def run_psa(
+    mu_baseline_positive: float,
+    mu_baseline_negative: float,
+    effect_size_negative: float,
+    effect_size_positive: float,
     num_sims: int = 50,
     case_interaction: bool = False,
     n_readers_sim: list | None = None,
@@ -70,8 +69,6 @@ def run_psa(
     n_cases_pos: int = 80,
     true_params: dict | None = None,
     n_draws: int = 2000,
-    mu_baseline: float | None = None,
-    effect_size: float | None = None,
     output_dir: str = "psa_results/estimates",
 ):
     """Run prior sensitivity analysis for the case-level reader interaction model.
@@ -108,22 +105,15 @@ def run_psa(
     """
     # Step 1: True parameters
 
-    if true_params is None:
-        true_params = {
-            "mu_a": 1.0,  # population log-odds intercept
-            "sigma_a": 0.5,  # reader intercept SD
-            "mu_b": 0.3,  # population log-odds treatment effect
-            "sigma_b": 0.3,
-        }  # reader slope SD
-
-    if case_interaction:
-        true_params.update(
-            {
-                "sigma_gamma": 1.0,  # case variability SD (overridden by sweep)
-                "sigma_delta": 0.5,  # reader-case interaction SD
-            }
-        )
-
+    balanced_mu_baseline = (mu_baseline_negative + mu_baseline_positive) / 2
+    balanced_effect_size = (effect_size_negative + effect_size_positive) / 2
+    mu_a = logit(balanced_mu_baseline)
+    mu_b = logit(balanced_effect_size)
+    
+    true_params = {
+        "mu_a": mu_a,
+        "mu_b": mu_b,
+    }
     if n_readers_sim is None:
         n_readers_sim = [2, 4, 6, 8, 10, 20, 100, 500, 1000]
 
@@ -133,12 +123,6 @@ def run_psa(
         "informative",
         "frequentist",
     ]
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    parent_rng = np.random.default_rng(42)
-    if not case_interaction:
-        gamma_sim = np.arange(0.1, 0.6, 0.1) 
     
     sim_config = {
                 "num_sims": num_sims,
@@ -146,9 +130,25 @@ def run_psa(
                 "n_cases_pos": n_cases_pos,
                 "n_draws": n_draws,
                 "readers_sim": n_readers_sim,
-                "overdispersion": list(gamma_sim),
                 "priors": priors_options,
+                "mu_baseline_negative": mu_baseline_negative,
+                "mu_baseline_positive": mu_baseline_positive,
+                "effect_size_negative": effect_size_negative,
+                "effect_size_positive": effect_size_positive,
+                "mu_a": mu_a,
+                "mu_b": mu_b,
             }
+    if not case_interaction:
+        gamma_sim = np.arange(0.1, 0.6, 0.1) 
+        sim_config.update({"gamma_sim": list(gamma_sim)})
+    
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    parent_rng = np.random.default_rng(42)
+
+   
+    
     fpath = os.path.join(
                         output_dir,
                         f"sim_config.json",
@@ -156,11 +156,12 @@ def run_psa(
     with open(fpath, "w", encoding="utf-8") as f:
         json.dump(sim_config, f, indent=4)
 
-    for sim in tqdm(range(num_sims), desc="simulation"):
-        sim_rng = np.random.default_rng(
-            parent_rng.integers(0, 2**31)
-        )
+    estimates = None
 
+    for sim in tqdm(range(num_sims), desc="simulation"):
+        # sim_rng = np.random.default_rng(
+        #     parent_rng.integers(0, 2**31)
+        # )
         for size_idx, n_readers in enumerate(
             tqdm(
                 n_readers_sim,
@@ -182,18 +183,16 @@ def run_psa(
                     neg_sim = simulate_aggregated_data(
                         n_readers,
                         n_cases_neg,
-                        iter_params,
-                        mu_baseline=mu_baseline,
-                        effect_size=effect_size,
-                        rng=sim_rng,
+                        mu_baseline=mu_baseline_negative,
+                        effect_size=effect_size_negative,
+                        rng=None,
                     )
                     pos_sim = simulate_aggregated_data(
                         n_readers,
                         n_cases_pos,
-                        iter_params,
-                        mu_baseline=mu_baseline,
-                        effect_size=effect_size,
-                        rng=sim_rng,
+                        mu_baseline=mu_baseline_positive,
+                        effect_size=effect_size_positive,
+                        rng=None,
                     )
 
                     data = mock_reading_data(
@@ -225,7 +224,6 @@ def run_psa(
                                 ],
                             }
                         else:
-
                             infer_rng = (
                                 np.random.default_rng(
                                     parent_rng.integers(
@@ -275,7 +273,7 @@ def run_psa(
                                     "mu_b", "mean"
                                 ],
                                 "gamma_neg": summary_neg.loc[
-                                    "gamma", "mean"
+                                "gamma", "mean"
                                 ],
                                 "gamma_pos": summary_pos.loc[
                                     "gamma", "mean"
@@ -286,30 +284,14 @@ def run_psa(
 
                             del idatas, idata_neg, idata_pos
                             gc.collect()
-
-                        # Step 5: Save result
-                        if (
-                            mu_baseline is not None
-                            and effect_size is not None
-                        ):
-                            estimates["true_params"] = {
-                                "mu_baseline": mu_baseline,
-                                "effect_size": effect_size,
-                                "sigma_params": 1.0,
-                            }
-                        else:
-                            estimates["true_params"] = {
-                                "mu_a": mu_baseline,
-                                "sigma_a": 0.5,
-                                "mu_b": effect_size,
-                                "sigma_b": 0.3,
-                            }
-                        estimates["true_params"][
-                            "gamma"
-                        ] = gamma
-                        estimates["true_params"][
-                            "n_readers"
-                        ] = n_readers
+                        
+                        ### Save results
+                        estimates["true_params"] = {
+                            "mu_a": mu_a,
+                            "mu_b": mu_b,
+                            "sigma_params": 1.0,
+                            "n_readers": n_readers
+                        }
                         if isinstance(prior, str):
                             estimates["true_params"][
                                 "prior"
@@ -322,27 +304,27 @@ def run_psa(
                         estimates["replicate"] = sim
                         path = os.path.join(
                             output_dir,
-                            f"nointeraction_{sim}.{prior_idx}.{size_idx}.{gamma_idx}.pkl",
+                            f"nointeraction_{sim}.{prior_idx}.{n_readers}.{gamma_idx}.pkl",
                         )
                         with open(path, "wb") as f:
                             pickle.dump(estimates, f)
             else:
-                # Step 2: Simulate data with current sigma_gamma
+                ### case interaction model 
                 neg_sim = simulate_case_data(
                     n_readers,
                     n_cases_neg,
-                    iter_params,
-                    rng=sim_rng,
+                    mu_baseline=mu_baseline_negative,
+                    effect_size=effect_size_negative,
                 )
                 pos_sim = simulate_case_data(
                     n_readers,
                     n_cases_pos,
-                    iter_params,
-                    rng=sim_rng,
+                    mu_baseline=mu_baseline_positive,
+                    effect_size=effect_size_positive,
                 )
 
                 data = mock_case_reading_data(
-                    neg_sim, pos_sim, rng=sim_rng
+                    neg_sim, pos_sim
                 )
 
                 # Step 4 (partial): Empirical balanced accuracy for frequentist model
@@ -371,8 +353,12 @@ def run_psa(
                         }
                     else:
 
-                        infer_rng = np.random.default_rng(
-                            parent_rng.integers(0, 2**31)
+                        infer_rng = (
+                            np.random.default_rng(
+                                parent_rng.integers(
+                                    0, 2**31
+                                )
+                            )
                         )
                         idatas = run_model_inference(
                             data,
@@ -385,12 +371,18 @@ def run_psa(
 
                         summary_neg = az.summary(
                             idata_neg,
-                            var_names=["mu_a", "mu_b"],
+                            var_names=[
+                                "mu_a",
+                                "mu_b",
+                            ],
                             stat_focus="mean",
                         )
                         summary_pos = az.summary(
                             idata_pos,
-                            var_names=["mu_a", "mu_b"],
+                            var_names=[
+                                "mu_a",
+                                "mu_b",
+                            ],
                             stat_focus="mean",
                         )
 
@@ -414,8 +406,12 @@ def run_psa(
                         del idatas, idata_neg, idata_pos
                         gc.collect()
 
-                    # Step 5: Save result
-                    estimates["true_params"] = iter_params
+                    
+                    estimates["true_params"] = {
+                        "mu_a": mu_a,
+                        "mu_b": mu_b,
+                        "sigma_params": 1.0,
+                    }
                     estimates["true_params"][
                         "n_readers"
                     ] = n_readers
@@ -427,93 +423,18 @@ def run_psa(
                         estimates["true_params"][
                             "prior"
                         ] = prior_idx
+                    estimates["sim_config"] = sim_config
+                    estimates["replicate"] = sim
+                    # logging.info(f'Prior | Param | Estimate | Difference \n {estimates["true_params"]["prior"]} | mu_a_neg | {estimates["mu_a_neg"]} | {estimates["mu_a_neg"] - estimates["true_params"]["mu_a"]} \n {estimates["true_params"]["prior"]} | mu_b_neg | {estimates["mu_b_neg"]} | {estimates["mu_b_neg"] - estimates["true_params"]["mu_b"]} \n {estimates["true_params"]["prior"]} | mu_a_pos | {estimates["mu_a_pos"]} | {estimates["mu_a_pos"] - estimates["true_params"]["mu_a"]} \n {estimates["true_params"]["prior"]} | mu_b_pos | {estimates["mu_b_pos"]} | {estimates["mu_b_pos"] - estimates["true_params"]["mu_b"]}')
+                    #              )
                     path = os.path.join(
                         output_dir,
-                        f"interaction_{sim}.{prior_idx}.{size_idx}.{gamma_idx}.pkl",
+                        f"interaction_{sim}.{prior_idx}.{n_readers}.pkl",
                     )
                     with open(path, "wb") as f:
                         pickle.dump(estimates, f)
+    return estimates
 
-
-# ---------------------------------------------------------------------------
-# Step 6: Load and summarise results
-# ---------------------------------------------------------------------------
-
-
-def load_psa_results(
-    output_dir: str = "psa_results/estimates",
-    n_readers_sim: list | None = None,
-    priors_options: list | None = None,
-    case_interaction: bool = False,
-) -> pd.DataFrame:
-    """Load all saved PSA estimate pickles into a tidy DataFrame.
-
-    Columns: sim, prior, n_readers, sigma_gamma, mu_a_neg, mu_b_neg,
-             mu_a_pos, mu_b_pos, intercept_freq, slope_freq,
-             true_mu_a, true_mu_b.
-    """
-    if n_readers_sim is None:
-        n_readers_sim = [2, 4, 6, 8, 10, 20, 100, 500, 1000]
-    if not case_interaction:
-        gamma_sim = np.arange(0.1, 0.6, 0.1)
-    if priors_options is None:
-        priors_options = [
-            "diffuse",
-            "weakly informative",
-            "informative",
-            "frequentist",
-        ]
-
-    rows = []
-    for path in sorted(os.listdir(output_dir)):
-        if not path.startswith(
-            "estimate_"
-        ) or not path.endswith(".pkl"):
-            continue
-        parts = (
-            path.replace("estimate_", "")
-            .replace(".pkl", "")
-            .split(".")
-        )
-        if not case_interaction:
-            sim_idx, prior_idx, size_idx, gamma_idx = (
-                int(parts[0]),
-                int(parts[1]),
-                int(parts[2]),
-                int(parts[3]),
-            )
-        else:
-            sim_idx, prior_idx, size_idx = (
-                int(parts[0]),
-                int(parts[1]),
-                int(parts[2]),
-            )
-
-        with open(
-            os.path.join(output_dir, path), "rb"
-        ) as f:
-            est = pickle.load(f)
-
-        true = est.get("true_params", {})
-        rows.append(
-            {
-                "sim": sim_idx,
-                "prior": priors_options[prior_idx],
-                "n_readers": n_readers_sim[size_idx],
-                "mu_a_neg": est["mu_a_neg"],
-                "mu_b_neg": est["mu_b_neg"],
-                "mu_a_pos": est["mu_a_pos"],
-                "mu_b_pos": est["mu_b_pos"],
-                "intercept_freq": est["intercept_freq"],
-                "slope_freq": est["slope_freq"],
-                "true_mu_a": true.get("mu_a", np.nan),
-                "true_mu_b": true.get("mu_b", np.nan),
-            }
-        )
-        if not case_interaction:
-            rows.append({"gamma": gamma_sim[gamma_idx]})
-
-    return pd.DataFrame(rows)
 
 
 def main(argv=None):
@@ -545,14 +466,28 @@ def main(argv=None):
         help="Use BalancedCaseInteractionModel instead of BalancedModel.",
     )
     parser.add_argument(
-        "--mu-baseline",
+        "--mu-baseline-negative",
         type=float,
         default=None,
         metavar="FLOAT",
         help="Population log-odds intercept mu_a (default: None).",
     )
     parser.add_argument(
-        "--effect-size",
+        "--mu-baseline-positive",
+        type=float,
+        default=None,
+        metavar="FLOAT",
+        help="Population log-odds intercept mu_a (default: None).",
+    )
+    parser.add_argument(
+        "--effect-size-negative",
+        type=float,
+        default=None,
+        metavar="FLOAT",
+        help="Population log-odds treatment effect mu_b (default: None).",
+    )
+    parser.add_argument(
+        "--effect-size-positive",
         type=float,
         default=None,
         metavar="FLOAT",
@@ -598,8 +533,10 @@ def main(argv=None):
         n_readers_sim=args.n_readers,
         output_dir=args.output_dir,
         case_interaction=args.case_interaction,
-        mu_baseline=args.mu_baseline,
-        effect_size=args.effect_size,
+        mu_baseline_negative=args.mu_baseline_negative,
+        mu_baseline_positive=args.mu_baseline_positive,
+        effect_size_negative=args.effect_size_negative,
+        effect_size_positive=args.effect_size_positive,
         true_params=args.true_params,
         num_sims=args.num_sims,
         n_draws=args.n_draws,

@@ -5,6 +5,7 @@ import numpy as np
 from typing import Optional
 import arviz as az
 import logging
+import sys
 from sklearn.metrics import auc
 import matplotlib.pyplot as plt
 import os
@@ -30,6 +31,23 @@ class BaseModel:
         self.obs_data = obs_data  # observed data
         self.priors = priors  # model priors
         self.idata = None  # inference data
+
+    @staticmethod
+    def _sampling_kwargs() -> dict:
+        """Return PyMC sampling kwargs that are safe under a debugger.
+
+        PyMC runs chains in parallel processes by default. Debuggers often do not
+        follow those worker processes unless explicitly configured, so breakpoints
+        may appear to be skipped. When a debugger is attached, force single-process
+        sampling to keep execution in the current debugged process.
+        """
+        if sys.gettrace() is not None:
+            return {
+                "chains": 1,
+                "cores": 1,
+                "progressbar": False,
+            }
+        return {}
 
     @staticmethod
     def _setup_model(obs_data, priors, n_cases) -> pm.Model:
@@ -394,10 +412,24 @@ class BaseModel:
         )
 
         with model:
-            idata = pm.sample(draws=4000)
+            idata = pm.sample(
+                draws=4000,
+                **self._sampling_kwargs(),
+            )
             pm.sample_posterior_predictive(
                 idata, extend_inferencedata=True
             )
+        
+        logging.info(f'Inference completed. \n {pm.summary(
+                idata,
+                var_names=[
+                    "mu_a",
+                    "sigma_a",
+                    "mu_b",
+                    "sigma_b",
+                ],
+                
+            )}')
 
         return idata, model
 
@@ -820,7 +852,10 @@ class BalancedCaseInteractionModel(BalancedModel):
             )
 
             with model:
-                idata = pm.sample(draws=4000)
+                idata = pm.sample(
+                    draws=4000,
+                    **self._sampling_kwargs(),
+                )
                 pm.sample_posterior_predictive(
                     idata, extend_inferencedata=True
                 )

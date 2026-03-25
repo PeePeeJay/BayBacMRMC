@@ -9,6 +9,7 @@ from mrmc_baybac.utils import (
     get_simulation_configs,
     get_thresholds_from_ratings,
     read_psa_estimates_from_directory,
+    get_plot_values
 )
 
 
@@ -428,13 +429,92 @@ def psa_result(
             f"Specified path is not a directory: {path}"
         )
 
-    # load simulation config
-    sim_config = get_simulation_configs(path)
-
-
     simulation_results = read_psa_estimates_from_directory(
         path, case_interaction=case_interaction
     )
-    
-    fig = plt.subplots(figsize=(8, 6))
+    # plot settings
+    plt.rcParams["font.family"] = "serif"
+    plt.rcParams["font.variant"] = "normal"
+    ax_label_fs = 18
+    sup_ax_label_fs = 24
+    ax_tick_fs = 14
+    title_fs = 16
+    legend_fs = 13
+    plt.style.use("grayscale")
+    metric = "abs_error"
+    priors = ["diffuse", "weakly informative", "informative", "Classical linear model"]
+    if case_interaction:
+        fig, ax = plt.subplots(
+            1,
+            len(priors),
+            sharey=True,
+            sharex=True,
+            figsize=(16, 8),
+            constrained_layout=True,
+        )
+        for i, prior in enumerate(priors):
+            if prior == "Classical linear model":
+                ax[i].set_title(f"{prior}", fontsize=title_fs)
+            ax[i].set_title(f"{prior.capitalize()} prior", fontsize=title_fs)
+            if prior == "Classical linear model":
+                x, y, y_err = get_plot_values(
+                    simulation_results, "slope_freq", metric, "frequentist", gamma=None, case_interaction=case_interaction
+                )
+            else:
+                x, y, y_err = get_plot_values(
+                    simulation_results, "slope_bayes", metric, prior, gamma=None, case_interaction=case_interaction
+                )
+            ax[i].errorbar(
+                x, y.values, yerr=y_err, fmt="o", label=r"$prior=$" f"{prior}", capsize=5
+            )
+            ax[i].set_xscale("log")
+            ax[i].grid(True, c="lightgrey")
+            ax[i].tick_params(labelsize=ax_tick_fs)
+        fig.supylabel(r"Mean absolute error", fontsize=sup_ax_label_fs)
+        fig.supxlabel(r"n", fontsize=sup_ax_label_fs)
+        fig.set_facecolor("white")
+        plt.show()
+    else: 
+        gammas = [0.1, 0.2, 0.5]
+        fig, ax = plt.subplots(
+            len(gammas),
+            len(priors),
+            sharey=True,
+            sharex=True,
+            figsize=(16, 8),
+            constrained_layout=True,
+        )
+        for i, gamma in enumerate(gammas):
+            for j, prior in enumerate(priors):
+                if i == 0 and prior == "Classical linear model":
+                    ax[i, j].set_title(f"{prior}", fontsize=title_fs)
+                elif i == 0:
+                    ax[i, j].set_title(f"{prior.capitalize()} prior", fontsize=title_fs)
+                if prior == "Classical linear model":
+                    x, y, y_err = get_plot_values(
+                        simulation_results, "slope_freq", metric, "frequentist", gamma=gamma, case_interaction=case_interaction
+                    )
+                else:
+                    x, y, y_err = get_plot_values(
+                        simulation_results, "slope_bayes", metric, prior, gamma=gamma, case_interaction=case_interaction
+                    )
+                ax[i, j].errorbar(
+                    x, y.values, yerr=y_err, fmt="o", label=r"$prior=$" f"{prior}", capsize=5
+                )
+                ax[i, j].set_xscale("log")
+                ax[i, j].grid(True, c="lightgrey")
+                ax[i, -1].text(
+                    1.05,
+                    0.5,
+                    r"$\gamma=$" f"{gamma}",
+                    va="center",
+                    ha="left",
+                    fontsize=ax_label_fs,
+                    transform=ax[i, -1].transAxes,
+                )
+                ax[i, j].tick_params(labelsize=ax_tick_fs)
+        fig.supylabel(r"Mean absolute error", fontsize=sup_ax_label_fs)
+        fig.supxlabel(r"n", fontsize=sup_ax_label_fs)
+        fig.set_facecolor("white")
+        plt.show()
     return fig

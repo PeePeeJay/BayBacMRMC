@@ -14,6 +14,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+log_cli = true
+log_cli_level = "info"
 markers = [
     "slow: marks tests as slow (run with -m slow, skip with -m 'not slow')",
 ]

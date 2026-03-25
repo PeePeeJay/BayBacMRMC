@@ -10,22 +10,19 @@ from mrmc_baybac.simulation import (
 
 EXPECTED_KEYS = {
     "k",
-    "alpha",
-    "beta",
-    "p",
-    "a_beta",
-    "b_beta",
+    "n_readers",
+    "n_cases"
 }
 
 
 @pytest.fixture
 def sim_inputs():
-    n_readers = 3
+    n_readers = 100
     true_params = {
         "mu_a": 1.0,
-        "sigma_a": 0.5,
+        # "sigma_a": 0.5,
         "mu_b": 0.5,
-        "sigma_b": 0.3,
+        # "sigma_b": 0.3,
         "gamma": 0.2,
     }
     return dict(
@@ -44,42 +41,10 @@ class TestSimulateData:
         result = simulate_aggregated_data(**sim_inputs)
         assert EXPECTED_KEYS.issubset(result.keys())
 
-    def test_alpha_shape(self, sim_inputs):
-        result = simulate_aggregated_data(**sim_inputs)
-        assert result["alpha"].shape == (
-            sim_inputs["n_readers"],
-        )
-
-    def test_beta_shape(self, sim_inputs):
-        result = simulate_aggregated_data(**sim_inputs)
-        assert result["beta"].shape == (
-            sim_inputs["n_readers"],
-        )
-
-    def test_p_in_unit_interval(self, sim_inputs):
-        result = simulate_aggregated_data(**sim_inputs)
-        assert (result["p"] >= 0).all()
-        assert (result["p"] <= 1).all()
-
     def test_k_bounded_by_n_cases(self, sim_inputs):
         result = simulate_aggregated_data(**sim_inputs)
         assert (result["k"] >= 0).all()
         assert (result["k"] <= sim_inputs["n_cases"]).all()
-
-    def test_a_beta_positive(self, sim_inputs):
-        result = simulate_aggregated_data(**sim_inputs)
-        assert (result["a_beta"] > 0).all()
-
-    def test_b_beta_positive(self, sim_inputs):
-        result = simulate_aggregated_data(**sim_inputs)
-        assert (result["b_beta"] > 0).all()
-
-    def test_p_shape(self, sim_inputs):
-        result = simulate_aggregated_data(**sim_inputs)
-        assert result["p"].shape == (
-            sim_inputs["n_readers"],
-            2,
-        )
 
     def test_k_shape(self, sim_inputs):
         result = simulate_aggregated_data(**sim_inputs)
@@ -97,31 +62,7 @@ class TestSimulateData:
                 val = result["k"][reader, setting]
                 assert 0 <= val <= sim_inputs["n_cases"]
 
-    def test_reproducible_with_same_rng(self, sim_inputs):
-        rng1 = np.random.default_rng(0)
-        rng2 = np.random.default_rng(0)
-        r1 = simulate_aggregated_data(
-            **sim_inputs, rng=rng1
-        )
-        r2 = simulate_aggregated_data(
-            **sim_inputs, rng=rng2
-        )
-        np.testing.assert_array_equal(r1["k"], r2["k"])
-        np.testing.assert_array_equal(
-            r1["alpha"], r2["alpha"]
-        )
-
-    def test_different_rng_produces_different_alpha(
-        self, sim_inputs
-    ):
-        r1 = simulate_aggregated_data(
-            **sim_inputs, rng=np.random.default_rng(1)
-        )
-        r2 = simulate_aggregated_data(
-            **sim_inputs, rng=np.random.default_rng(2)
-        )
-        assert not np.array_equal(r1["alpha"], r2["alpha"])
-
+   
 
 MOCK_READING_EXPECTED_COLUMNS = {
     "reader",
@@ -136,21 +77,21 @@ TRUE_PARAMS = {
     "sigma_a": 0.5,
     "mu_b": 0.5,
     "sigma_b": 0.3,
-    "gamma": 0.2,
+    "gamma": 0.1,
 }
 
 
 @pytest.fixture
 def negative_sim_data():
     return simulate_aggregated_data(
-        n_readers=3, n_cases=5, true_params=TRUE_PARAMS
+        n_readers=4, n_cases=120, true_params=TRUE_PARAMS, mu_baseline=0.73, effect_size=0.05
     )
 
 
 @pytest.fixture
 def positive_sim_data():
     return simulate_aggregated_data(
-        n_readers=3, n_cases=5, true_params=TRUE_PARAMS
+        n_readers=4, n_cases=80, true_params=TRUE_PARAMS, mu_baseline=0.73, effect_size=0.05
     )
 
 

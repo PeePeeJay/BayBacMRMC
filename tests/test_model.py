@@ -1,6 +1,37 @@
 import os
+
+import pytest
 from mrmc_baybac.model import BaseModel, BalancedModel
+from mrmc_baybac.simulation import simulate_aggregated_data, mock_reading_data
 import numpy as np
+
+
+@pytest.fixture
+def aggregated_negative_sim_data():
+    return simulate_aggregated_data(
+        n_readers=4, n_cases=120, mu_baseline=0.79, effect_size=0.04, gamma=0.1
+    )
+
+
+@pytest.fixture
+def aggregated_positive_sim_data():
+    return simulate_aggregated_data(
+        n_readers=4, n_cases=80, mu_baseline=0.75, effect_size=0.06, gamma=0.1
+    )
+
+@pytest.fixture
+def simulated_aggregated_data(aggregated_negative_sim_data, aggregated_positive_sim_data):
+    return mock_reading_data(aggregated_negative_sim_data, aggregated_positive_sim_data)
+
+
+class TestRunModel:
+    """Tests model inference on simulated data"""
+
+    def test_run_inference_on_simulated_data(self, simulated_aggregated_data):
+        m = BalancedModel(obs_data=simulated_aggregated_data, priors="weakly informative")
+        idatas = m.run_inference()
+        assert "posterior" in idatas[0].keys()
+        assert "posterior_predictive" in idatas[0].keys()
 
 
 def test__run_inference_with_default_priors(vandyke_df):

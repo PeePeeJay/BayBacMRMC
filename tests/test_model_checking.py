@@ -35,6 +35,21 @@ class TestRunPsaCaseA:
             tmp_path / "psa_results" / "estimates"
         )
 
+    @pytest.fixture
+    def psa_arguments_no_interaction(self):
+        return dict(
+            num_sims=1,
+            case_interaction=False,
+            n_readers_sim=[4],
+            n_cases_neg=120,
+            n_cases_pos=80,
+            mu_baseline_negative=0.73,
+            effect_size_negative=0.05,
+            mu_baseline_positive=0.75,
+            effect_size_positive=0.06,
+            n_draws=2000,
+        )
+
     def _run(self, **kwargs):
         defaults = dict(
             num_sims=1,
@@ -57,6 +72,12 @@ class TestRunPsaCaseA:
             ),
         ):
             run_psa(**defaults)
+
+    def test_run_psa_no_interaction(self, psa_arguments_no_interaction):
+        kwargs = psa_arguments_no_interaction
+        kwargs.update({"output_dir": self.output_dir})
+        estimates = run_psa(**kwargs)
+        assert 0 < len(estimates)
 
     def test_output_dir_created(self):
         self._run()
