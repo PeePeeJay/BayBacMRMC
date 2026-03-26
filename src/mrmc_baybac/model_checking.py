@@ -344,6 +344,10 @@ def run_psa(
                             "mu_b_neg": np.nan,
                             "mu_a_pos": np.nan,
                             "mu_b_pos": np.nan,
+                            "mu_gamma_neg": np.nan,
+                            "mu_gamma_pos": np.nan,
+                            "mu_delta_neg": np.nan,
+                            "mu_delta_pos": np.nan,
                             "intercept_freq": freq_res.params[
                                 "Intercept"
                             ],
@@ -393,11 +397,24 @@ def run_psa(
                             "mu_b_neg": summary_neg.loc[
                                 "mu_b", "mean"
                             ],
+                            "mu_gamma_neg": summary_neg.loc[
+                                "case_variability", "mean"
+                            ],
+                            "mu_delta_neg": summary_neg.loc[
+                                "case_interaction", "mean"
+
+                            ],
                             "mu_a_pos": summary_pos.loc[
                                 "mu_a", "mean"
                             ],
                             "mu_b_pos": summary_pos.loc[
                                 "mu_b", "mean"
+                            ],
+                            "mu_gamma_pos": summary_pos.loc[
+                                "case_variability", "mean"
+                            ],
+                            "mu_delta_pos": summary_pos.loc[
+                                "case_interaction", "mean"
                             ],
                             "intercept_freq": np.nan,
                             "slope_freq": np.nan,

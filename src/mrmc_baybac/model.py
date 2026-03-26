@@ -761,15 +761,6 @@ class BalancedCaseInteractionModel(BalancedModel):
                 1,
             )
 
-            # overdispersion
-            gamma = pm.TruncatedNormal(
-                "gamma",
-                mu=priors["gamma_mu"],
-                sigma=priors["gamma_sigma"],
-                lower=0.05,
-                upper=0.95,
-            )
-
             ### reader level parameters
             # non-centered parameterization for intercepts
             z_a = pm.Normal(
