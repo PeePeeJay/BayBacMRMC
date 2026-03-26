@@ -73,7 +73,9 @@ class TestRunPsaCaseA:
         ):
             run_psa(**defaults)
 
-    def test_run_psa_no_interaction(self, psa_arguments_no_interaction):
+    def test_run_psa_no_interaction(
+        self, psa_arguments_no_interaction
+    ):
         kwargs = psa_arguments_no_interaction
         kwargs.update({"output_dir": self.output_dir})
         estimates = run_psa(**kwargs)

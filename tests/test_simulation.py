@@ -8,11 +8,7 @@ from mrmc_baybac.simulation import (
     mock_case_reading_data,
 )
 
-EXPECTED_KEYS = {
-    "k",
-    "n_readers",
-    "n_cases"
-}
+EXPECTED_KEYS = {"k", "n_readers", "n_cases"}
 
 
 @pytest.fixture
@@ -62,7 +58,6 @@ class TestSimulateData:
                 val = result["k"][reader, setting]
                 assert 0 <= val <= sim_inputs["n_cases"]
 
-   
 
 MOCK_READING_EXPECTED_COLUMNS = {
     "reader",
@@ -84,14 +79,22 @@ TRUE_PARAMS = {
 @pytest.fixture
 def negative_sim_data():
     return simulate_aggregated_data(
-        n_readers=4, n_cases=120, true_params=TRUE_PARAMS, mu_baseline=0.73, effect_size=0.05
+        n_readers=4,
+        n_cases=120,
+        true_params=TRUE_PARAMS,
+        mu_baseline=0.73,
+        effect_size=0.05,
     )
 
 
 @pytest.fixture
 def positive_sim_data():
     return simulate_aggregated_data(
-        n_readers=4, n_cases=80, true_params=TRUE_PARAMS, mu_baseline=0.73, effect_size=0.05
+        n_readers=4,
+        n_cases=80,
+        true_params=TRUE_PARAMS,
+        mu_baseline=0.73,
+        effect_size=0.05,
     )
 
 

@@ -20,8 +20,5 @@ def psa_plot_arguments(psa_result_dir):
 def test_psa_result_raises_when_path_is_not_a_directory(
     psa_result_dir,
 ):
-    fig = psa_result(
-        psa_result_dir,
-        case_interaction=True
-    )
+    fig = psa_result(psa_result_dir, case_interaction=True)
     assert fig is not None

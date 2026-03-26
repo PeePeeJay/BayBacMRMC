@@ -419,7 +419,7 @@ class BaseModel:
             pm.sample_posterior_predictive(
                 idata, extend_inferencedata=True
             )
-        
+
         logging.info(f'Inference completed. \n {pm.summary(
                 idata,
                 var_names=[
@@ -787,13 +787,12 @@ class BalancedCaseInteractionModel(BalancedModel):
             )
             z_gamma_c = pm.Normal(
                 "z_gamma_c", mu=0, sigma=1, dims="case"
-                )
+            )
             gamma_c = pm.Deterministic(
                 "case_variability",
                 mu_gamma_c + z_gamma_c * sigma_gamma_c,
                 dims="case",
             )
-
 
             # Reader-case interaction
             mu_delta_rc = pm.Normal(
@@ -803,7 +802,10 @@ class BalancedCaseInteractionModel(BalancedModel):
                 "sigma_delta_rc", 1
             )
             z_delta_rc = pm.Normal(
-                "z_delta_rc", mu=0, sigma=1, dims=["reader", "case"]
+                "z_delta_rc",
+                mu=0,
+                sigma=1,
+                dims=["reader", "case"],
             )
             delta_rc = pm.Deterministic(
                 "reader_case_interaction",

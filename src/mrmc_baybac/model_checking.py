@@ -50,8 +50,10 @@ def run_model_inference(
     rng=None,
 ) -> list:
     if case_interaction:
-      
-        model = BalancedCaseInteractionModel(obs_data=data, priors=priors)
+
+        model = BalancedCaseInteractionModel(
+            obs_data=data, priors=priors
+        )
     else:
         BalancedModel(obs_data=data, priors=priors)
     return model.run_inference()
@@ -105,11 +107,15 @@ def run_psa(
     """
     # Step 1: True parameters
 
-    balanced_mu_baseline = (mu_baseline_negative + mu_baseline_positive) / 2
-    balanced_effect_size = (effect_size_negative + effect_size_positive) / 2
+    balanced_mu_baseline = (
+        mu_baseline_negative + mu_baseline_positive
+    ) / 2
+    balanced_effect_size = (
+        effect_size_negative + effect_size_positive
+    ) / 2
     mu_a = logit(balanced_mu_baseline)
     mu_b = logit(balanced_effect_size)
-    
+
     true_params = {
         "mu_a": mu_a,
         "mu_b": mu_b,
@@ -123,36 +129,33 @@ def run_psa(
         "informative",
         "frequentist",
     ]
-    
+
     sim_config = {
-                "num_sims": num_sims,
-                "n_cases_neg": n_cases_neg,
-                "n_cases_pos": n_cases_pos,
-                "n_draws": n_draws,
-                "readers_sim": n_readers_sim,
-                "priors": priors_options,
-                "mu_baseline_negative": mu_baseline_negative,
-                "mu_baseline_positive": mu_baseline_positive,
-                "effect_size_negative": effect_size_negative,
-                "effect_size_positive": effect_size_positive,
-                "mu_a": mu_a,
-                "mu_b": mu_b,
-            }
+        "num_sims": num_sims,
+        "n_cases_neg": n_cases_neg,
+        "n_cases_pos": n_cases_pos,
+        "n_draws": n_draws,
+        "readers_sim": n_readers_sim,
+        "priors": priors_options,
+        "mu_baseline_negative": mu_baseline_negative,
+        "mu_baseline_positive": mu_baseline_positive,
+        "effect_size_negative": effect_size_negative,
+        "effect_size_positive": effect_size_positive,
+        "mu_a": mu_a,
+        "mu_b": mu_b,
+    }
     if not case_interaction:
-        gamma_sim = np.arange(0.1, 0.6, 0.1) 
+        gamma_sim = np.arange(0.1, 0.6, 0.1)
         sim_config.update({"gamma_sim": list(gamma_sim)})
-    
 
     os.makedirs(output_dir, exist_ok=True)
 
     parent_rng = np.random.default_rng(42)
 
-   
-    
     fpath = os.path.join(
-                        output_dir,
-                        f"sim_config.json",
-                    )
+        output_dir,
+        f"sim_config.json",
+    )
     with open(fpath, "w", encoding="utf-8") as f:
         json.dump(sim_config, f, indent=4)
 
@@ -273,7 +276,7 @@ def run_psa(
                                     "mu_b", "mean"
                                 ],
                                 "gamma_neg": summary_neg.loc[
-                                "gamma", "mean"
+                                    "gamma", "mean"
                                 ],
                                 "gamma_pos": summary_pos.loc[
                                     "gamma", "mean"
@@ -284,13 +287,13 @@ def run_psa(
 
                             del idatas, idata_neg, idata_pos
                             gc.collect()
-                        
+
                         ### Save results
                         estimates["true_params"] = {
                             "mu_a": mu_a,
                             "mu_b": mu_b,
                             "sigma_params": 1.0,
-                            "n_readers": n_readers
+                            "n_readers": n_readers,
                         }
                         if isinstance(prior, str):
                             estimates["true_params"][
@@ -309,7 +312,7 @@ def run_psa(
                         with open(path, "wb") as f:
                             pickle.dump(estimates, f)
             else:
-                ### case interaction model 
+                ### case interaction model
                 neg_sim = simulate_case_data(
                     n_readers,
                     n_cases_neg,
@@ -357,12 +360,8 @@ def run_psa(
                         }
                     else:
 
-                        infer_rng = (
-                            np.random.default_rng(
-                                parent_rng.integers(
-                                    0, 2**31
-                                )
-                            )
+                        infer_rng = np.random.default_rng(
+                            parent_rng.integers(0, 2**31)
                         )
                         idatas = run_model_inference(
                             data,
@@ -402,7 +401,6 @@ def run_psa(
                             ],
                             "mu_delta_neg": summary_neg.loc[
                                 "case_interaction", "mean"
-
                             ],
                             "mu_a_pos": summary_pos.loc[
                                 "mu_a", "mean"
@@ -423,7 +421,6 @@ def run_psa(
                         del idatas, idata_neg, idata_pos
                         gc.collect()
 
-                    
                     estimates["true_params"] = {
                         "mu_a": mu_a,
                         "mu_b": mu_b,
@@ -451,7 +448,6 @@ def run_psa(
                     with open(path, "wb") as f:
                         pickle.dump(estimates, f)
     return estimates
-
 
 
 def main(argv=None):

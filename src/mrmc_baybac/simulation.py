@@ -7,13 +7,13 @@ RNG = np.random.default_rng(42)
 
 
 def simulate_aggregated_data(
-        n_readers,
-        n_cases,
-        gamma,
-        mu_baseline=None,
-        effect_size=None,
-        rng=None,
-    ):
+    n_readers,
+    n_cases,
+    gamma,
+    mu_baseline=None,
+    effect_size=None,
+    rng=None,
+):
     data = pd.DataFrame()
     for setting in [0, 1]:
         with pm.Model() as model:
@@ -53,11 +53,12 @@ def simulate_aggregated_data(
         )
         data = pd.concat([data, data_])
 
-    k = np.empty((n_readers, 2), dtype=int) 
+    k = np.empty((n_readers, 2), dtype=int)
     for reader_idx in range(n_readers):
         for setting in [0, 1]:
             k[reader_idx, setting] = data.loc[
-                (data["Reader"] == reader_idx) & (data["Setting"] == setting),
+                (data["Reader"] == reader_idx)
+                & (data["Setting"] == setting),
                 "k",
             ].values[0]
     return {
@@ -206,11 +207,11 @@ def simulate_case_data(
     epsilon = 1e-2
 
     mu_a = logit(mu_baseline)
-    mu_b = logit(mu_baseline + effect_size) - logit(mu_baseline)
+    mu_b = logit(mu_baseline + effect_size) - logit(
+        mu_baseline
+    )
 
-    gamma_c = rng.normal(
-        0, 1.0, size=n_cases
-    )  # (n_cases,)
+    gamma_c = rng.normal(0, 1.0, size=n_cases)  # (n_cases,)
     delta_rc = rng.normal(
         0, 0.5, size=(n_readers, n_cases)
     )  # (n_readers, n_cases)
