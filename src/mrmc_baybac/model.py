@@ -753,12 +753,21 @@ class BalancedCaseInteractionModel(BalancedModel):
 
             mu_b = pm.Normal(
                 "mu_b",
-                mu=0,
-                sigma=1,
+                mu=priors["b_mu"],
+                sigma=priors["b_sigma"],
             )
             sigma_b = pm.HalfNormal(
                 "sigma_b",
                 1,
+            )
+
+            # overdispersion
+            gamma = pm.TruncatedNormal(
+                "gamma",
+                mu=priors["gamma_mu"],
+                sigma=priors["gamma_sigma"],
+                lower=0.05,
+                upper=0.95,
             )
 
             ### reader level parameters
@@ -779,18 +788,35 @@ class BalancedCaseInteractionModel(BalancedModel):
             )
 
             # case variability
-            gamma_c = pm.Normal(
+            mu_gamma_c = pm.Normal(
+                "mu_gamma_c", mu=0, sigma=2
+            )
+            sigma_gamma_c = pm.HalfNormal(
+                "sigma_gamma_c", 1
+            )
+            z_gamma_c = pm.Normal(
+                "z_gamma_c", mu=0, sigma=1, dims="case"
+                )
+            gamma_c = pm.Deterministic(
                 "case_variability",
-                mu=0,
-                sigma=1,
+                mu_gamma_c + z_gamma_c * sigma_gamma_c,
                 dims="case",
             )
 
+
             # Reader-case interaction
-            delta_rc = pm.Normal(
+            mu_delta_rc = pm.Normal(
+                "mu_delta_rc", mu=0, sigma=2
+            )
+            sigma_delta_rc = pm.HalfNormal(
+                "sigma_delta_rc", 1
+            )
+            z_delta_rc = pm.Normal(
+                "z_delta_rc", mu=0, sigma=1, dims=["reader", "case"]
+            )
+            delta_rc = pm.Deterministic(
                 "reader_case_interaction",
-                mu=0,
-                sigma=1,
+                mu_delta_rc + z_delta_rc * sigma_delta_rc,
                 dims=["reader", "case"],
             )
 

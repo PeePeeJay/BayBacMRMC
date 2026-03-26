@@ -5,7 +5,7 @@ from mrmc_baybac.plotting import psa_result
 @pytest.fixture
 def psa_result_dir():
     """Fixture to create a temporary directory for PSA results."""
-    return "/Users/ppjacobs/PythonProjects/BayBacMRMC/tests/psa_output"
+    return "/Users/ppjacobs/PythonProjects/BayBacMRMC/tests/psa_interaction"
 
 
 @pytest.fixture
@@ -22,5 +22,6 @@ def test_psa_result_raises_when_path_is_not_a_directory(
 ):
     fig = psa_result(
         psa_result_dir,
+        case_interaction=True
     )
     assert fig is not None
