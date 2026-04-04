@@ -34,11 +34,19 @@ def compute_posterior_accuracy_by_treatment(
 
 
 def get_thresholds_from_ratings(
-    ratings, min_rating=0, max_rating=None
+    ratings, min_rating=1, max_rating=None
 ):
     if not all([val >= 0 for val in ratings]):
         raise ValueError(
             "Ratings must be non-negative. Please transform ratings."
+        )
+
+    # Exclude rating value 0 from threshold construction.
+    ratings = np.asarray(ratings)
+    ratings = ratings[ratings != 0]
+    if ratings.size == 0:
+        raise ValueError(
+            "No non-zero ratings available to construct thresholds."
         )
 
     if all([val % 1 == 0 for val in ratings]) and (
@@ -53,16 +61,16 @@ def get_thresholds_from_ratings(
             ),
         )
     elif all([val <= 1 for val in ratings]):
-        thresholds = np.arange(0.0, 1, 0.1)
+        thresholds = np.arange(0.1, 1, 0.1)
     else:
-        thresholds = ratings.unique()
+        ratings = ratings[(ratings != 0) & (ratings != 100)]
+        thresholds = pd.Series(ratings).unique()
+        
     return thresholds
 
-
-# ---------------------------------------------------------------------------
-# Step 4 helper: empirical balanced accuracy
-# ---------------------------------------------------------------------------
-
+def bayes_p_value(a, b):
+    """Compute the Bayesian p-value for the hypothesis that a > b based on posterior samples."""
+    return np.sum(a > b) / len(a) 
 
 def compute_empirical_ba(
     data: pd.DataFrame,
@@ -154,8 +162,10 @@ def read_psa_estimates_from_directory(
     ]
     if case_interaction:
         posterior_vars += [
-            "case_variability",
-            "reader_case_interaction",
+            "mu_gamma_neg",
+            "mu_gamma_pos",
+            "mu_delta_neg",
+            "mu_delta_pos",
         ]
     else:
         posterior_vars += ["gamma_neg", "gamma_pos"]
@@ -341,25 +351,21 @@ def add_metrics_to_results(
     true_intercept = expit(true_mu_a)
 
     if case_interaction:
-        simulation_results["intercept_bayes"] = (
-            xr.apply_ufunc(
+        simulation_results["intercept_bayes"] = xr.apply_ufunc(
                 accuracy_at_baseline_case_interaction,
                 simulation_results["mu_a"],
                 simulation_results["mu_b"],
-                simulation_results["case_variability"],
-                simulation_results[
-                    "reader_case_interaction"
-                ],
-                simulation_results,
-            )
+                simulation_results["mu_gamma"],
+                simulation_results["mu_delta"],
         )
         simulation_results["slope_bayes"] = xr.apply_ufunc(
             effect_size_case_interaction,
             simulation_results["mu_a"],
             simulation_results["mu_b"],
-            simulation_results["case_variability"],
-            simulation_results["reader_case_interaction"],
+            simulation_results["mu_gamma"],
+            simulation_results["mu_delta"],
         )
+        
     else:
         simulation_results["intercept_bayes"] = (
             xr.apply_ufunc(

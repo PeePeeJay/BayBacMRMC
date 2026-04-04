@@ -415,6 +415,8 @@ class BaseModel:
             idata = pm.sample(
                 draws=4000,
                 **self._sampling_kwargs(),
+                # nuts_sampler="blackjax", 
+                progressbar=False,
             )
             pm.sample_posterior_predictive(
                 idata, extend_inferencedata=True
@@ -481,40 +483,45 @@ class BalancedModel(BaseModel):
         return idatas
 
     def _compute_tpr_tnr(self, threshold):
-        """Compute TPR and TNR for a given threshold.
+        """Compute TPR and TNR for a given threshold using posterior predictive samples.
 
         Args:
             threshold: Rating threshold for binarization
 
         Returns:
             tuple: (tpr_dict, tnr_dict) where each dict has keys "0" and "1" for treatment settings.
-                   Each value is a posterior sample array.
+                   Each value is a (chain, draw) array of posterior predictive accuracy samples.
         """
         idatas = self.run_inference(threshold)
 
         # idatas[0] is for negative cases (truth==0), idatas[1] is for positive cases (truth==1)
-        # Compute TNR (accuracy for negative cases) - posterior samples
         neg_idata = idatas[0]
-        neg_a_mu = neg_idata["posterior"]["mu_a"].values
-        neg_b_mu = neg_idata["posterior"]["mu_b"].values
-        neg_acc_0, neg_acc_1 = (
-            compute_posterior_accuracy_by_treatment(
-                neg_a_mu, neg_b_mu
-            )
-        )
-
-        # Compute TPR (accuracy for positive cases) - posterior samples
         pos_idata = idatas[1]
-        pos_a_mu = pos_idata["posterior"]["mu_a"].values
-        pos_b_mu = pos_idata["posterior"]["mu_b"].values
-        pos_acc_0, pos_acc_1 = (
-            compute_posterior_accuracy_by_treatment(
-                pos_a_mu, pos_b_mu
-            )
+
+        # Number of cases used to normalise the BetaBinomial count k
+        neg_n_cases = len(
+            self.obs_data[self.obs_data.truth == 0].case.unique()
+        )
+        pos_n_cases = len(
+            self.obs_data[self.obs_data.truth == 1].case.unique()
         )
 
-        tnr_dict = {"0": neg_acc_0, "1": neg_acc_1}
-        tpr_dict = {"0": pos_acc_0, "1": pos_acc_1}
+        # Posterior predictive k: shape (chain, draw, obs_id)
+        neg_k_pred = neg_idata.posterior_predictive["k"].values
+        pos_k_pred = pos_idata.posterior_predictive["k"].values
+
+        # Treatment index for each obs_id (0 = control, 1 = treatment)
+        neg_treatment = neg_idata.constant_data["treatment_idx"].values
+        pos_treatment = pos_idata.constant_data["treatment_idx"].values
+
+        # Average k across readers for each treatment, then normalise by n_cases
+        tnr_0 = neg_k_pred[..., neg_treatment == 0].mean(axis=-1) / neg_n_cases
+        tnr_1 = neg_k_pred[..., neg_treatment == 1].mean(axis=-1) / neg_n_cases
+        tpr_0 = pos_k_pred[..., pos_treatment == 0].mean(axis=-1) / pos_n_cases
+        tpr_1 = pos_k_pred[..., pos_treatment == 1].mean(axis=-1) / pos_n_cases
+
+        tnr_dict = {"0": tnr_0, "1": tnr_1}
+        tpr_dict = {"0": tpr_0, "1": tpr_1}
         return tpr_dict, tnr_dict
 
     def roc_curve_analysis(self):
@@ -780,7 +787,7 @@ class BalancedCaseInteractionModel(BalancedModel):
 
             # case variability
             mu_gamma_c = pm.Normal(
-                "mu_gamma_c", mu=0, sigma=2
+                "mu_gamma_c", mu=0, sigma=1
             )
             sigma_gamma_c = pm.HalfNormal(
                 "sigma_gamma_c", 1
@@ -796,7 +803,7 @@ class BalancedCaseInteractionModel(BalancedModel):
 
             # Reader-case interaction
             mu_delta_rc = pm.Normal(
-                "mu_delta_rc", mu=0, sigma=2
+                "mu_delta_rc", mu=0, sigma=1
             )
             sigma_delta_rc = pm.HalfNormal(
                 "sigma_delta_rc", 1
@@ -833,8 +840,85 @@ class BalancedCaseInteractionModel(BalancedModel):
                 dims="obs_id",
             )
         return model
+    
+    def _compute_tpr_tnr(self, threshold):
+        """Compute TPR and TNR for a given threshold using posterior predictive samples.
+
+        Args:
+            threshold: Rating threshold for binarization
+
+        Returns:
+            tuple: (tpr_dict, tnr_dict) where each dict has keys "0" and "1" for treatment settings.
+                   Each value is a (chain, draw) array of posterior predictive accuracy samples.
+        """
+        idatas = self.run_inference(threshold)
+
+        # idatas[0] is for negative cases (truth==0), idatas[1] is for positive cases (truth==1)
+        neg_idata = idatas[0]
+        pos_idata = idatas[1]
+
+        # Number of cases used to normalise the BetaBinomial count k
+        neg_n_cases = len(
+            self.obs_data[self.obs_data.truth == 0].case.unique()
+        )
+        pos_n_cases = len(
+            self.obs_data[self.obs_data.truth == 1].case.unique()
+        )
+
+        # Posterior predictive k: shape (chain, draw, obs_id)
+        neg_k_pred = neg_idata.posterior_predictive["k"].values
+        pos_k_pred = pos_idata.posterior_predictive["k"].values
+
+        # Treatment index for each obs_id (0 = control, 1 = treatment)
+        neg_treatment = neg_idata.constant_data["treatment_idx"].values
+        pos_treatment = pos_idata.constant_data["treatment_idx"].values
+
+        # Average k across readers for each treatment, then normalise by n_cases
+        tnr_0 = neg_k_pred[..., neg_treatment == 0].mean(axis=-1)
+        tnr_1 = neg_k_pred[..., neg_treatment == 1].mean(axis=-1) 
+        tpr_0 = pos_k_pred[..., pos_treatment == 0].mean(axis=-1) 
+        tpr_1 = pos_k_pred[..., pos_treatment == 1].mean(axis=-1) 
+
+        tnr_dict = {"0": tnr_0, "1": tnr_1}
+        tpr_dict = {"0": tpr_0, "1": tpr_1}
+        return tpr_dict, tnr_dict
+
+    # def _compute_tpr_tnr(self, threshold):
+    #     """Compute TPR and TNR for a given threshold.
+
+    #     Overrides BalancedModel._compute_tpr_tnr because this model's
+    #     likelihood observes ``rating_binary`` directly (Bernoulli), so
+    #     the negative-case model estimates P(rating >= threshold | truth=0)
+    #     which is FPR, not TNR.  TNR is therefore 1 - that estimate.
+    #     The positive-case model correctly estimates TPR.
+    #     """
+    #     idatas = self.run_inference(threshold)
+
+    #     neg_idata = idatas[0]
+    #     neg_a_mu = neg_idata["posterior_predictive"]["mu_a"].values
+    #     neg_b_mu = neg_idata["posterior"]["mu_b"].values
+    #     # Model estimates P(rating_binary==1 | truth=0) = FPR
+    #     fpr_0, fpr_1 = compute_posterior_accuracy_by_treatment(
+    #         neg_a_mu, neg_b_mu
+    #     )
+    #     # TNR = 1 - FPR
+    #     tnr_dict = {"0": 1 - fpr_0, "1": 1 - fpr_1}
+
+    #     pos_idata = idatas[1]
+    #     pos_a_mu = pos_idata["posterior_predictive"]["mu_a"].values
+    #     pos_b_mu = pos_idata["posterior_predictive"]["mu_b"].values
+    #     # Model estimates P(rating_binary==1 | truth=1) = TPR
+    #     tpr_0, tpr_1 = compute_posterior_accuracy_by_treatment(
+    #         pos_a_mu, pos_b_mu
+    #     )
+    #     tpr_dict = {"0": tpr_0, "1": tpr_1}
+
+    #     return tpr_dict, tnr_dict
 
     def run_inference(self, rating_threshold=0.5):
+        print(
+            "Using run inference method from BalancedCaseInteractionModel"
+        )
         df = self.obs_data.copy()
         if (
             rating_threshold < 0
@@ -872,7 +956,8 @@ class BalancedCaseInteractionModel(BalancedModel):
 
             with model:
                 idata = pm.sample(
-                    draws=4000,
+                    draws=2000,
+                    # nuts_sampler="blackjax",
                     **self._sampling_kwargs(),
                 )
                 pm.sample_posterior_predictive(

@@ -2,6 +2,7 @@ import numpy as np
 import arviz as az
 from sklearn.metrics import auc
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FixedLocator, FixedFormatter, MaxNLocator
 import os
 import pickle
 
@@ -10,14 +11,29 @@ from mrmc_baybac.utils import (
     get_thresholds_from_ratings,
     read_psa_estimates_from_directory,
     get_plot_values,
+    bayes_p_value,
 )
+
+
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.variant"] = "normal"
+ax_label_fs = 18
+sup_ax_label_fs = 24
+ax_tick_fs = 14
+title_fs = 16
+legend_fs = 13
+plt.style.use("grayscale")
 
 
 def plot_tpr_fpr_by_threshold(
     model,
     filename: str = "figures/tpr_tnr_by_threshold.png",
 ):
-    """Generate and save TPR/TNR plot with 95% HDI across thresholds.
+    """Generate and save TPR/FPR plots with 95% HDI across thresholds.
+
+    Also computes Bayesian p-values for posterior comparisons
+    ``setting 1 > setting 0`` per threshold, for both TPR and FPR,
+    and overlays those p-values on a right-side secondary y-axis.
 
     Args:
         model: The BalancedModel instance.
@@ -66,7 +82,7 @@ def plot_tpr_fpr_by_threshold(
         tpr_upper = [float(hdi[1]) for hdi in hdi_tpr]
         fpr_lower = [float(hdi[0]) for hdi in hdi_fpr]
         fpr_upper = [float(hdi[1]) for hdi in hdi_fpr]
-
+        
         metrics[setting] = {
             "thresholds": thresholds,
             "tpr_mean": means_tpr,
@@ -77,6 +93,25 @@ def plot_tpr_fpr_by_threshold(
             "fpr_upper": fpr_upper,
         }
 
+    # Bayesian posterior probability that setting 1 is larger than setting 0
+    # for each threshold, computed from paired posterior samples.
+    metrics["bayes_p_value"] = {
+        "tpr_1_gt_0": [
+            bayes_p_value(
+                np.asarray(tprs["1"][i]).flatten(),
+                np.asarray(tprs["0"][i]).flatten(),
+            )
+            for i in range(len(thresholds))
+        ],
+        "fpr_1_gt_0": [
+            bayes_p_value(
+                np.asarray(fprs["1"][i]).flatten(),
+                np.asarray(fprs["0"][i]).flatten(),
+            )
+            for i in range(len(thresholds))
+        ],
+    }
+
     # Ensure output directory exists
     out_dir = os.path.dirname(filename)
     if out_dir and not os.path.exists(out_dir):
@@ -85,64 +120,143 @@ def plot_tpr_fpr_by_threshold(
     # Create figure with TPR and TNR subplots
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
+    # Grayscale style map to keep settings distinguishable in B/W output.
+    setting_style = {
+        "0": {
+            "color": "dimgray",
+            "linestyle": "--",
+            "marker": "s",
+            "fill_alpha": 0.15,
+        },
+        "1": {
+            "color": "black",
+            "linestyle": "-",
+            "marker": "o",
+            "fill_alpha": 0.25,
+        },
+    }
+
     for setting in ["0", "1"]:
         m = metrics[setting]
-        thresholds_x = range(len(m["thresholds"]))
+        style = setting_style[setting]
+        thresholds_x = m["thresholds"]
 
         # TPR subplot
         axes[0].plot(
             thresholds_x,
             m["tpr_mean"],
-            marker="o",
+            color=style["color"],
+            linestyle=style["linestyle"],
+            marker=style["marker"],
             label=f"Setting {setting}",
         )
         axes[0].fill_between(
             thresholds_x,
             m["tpr_lower"],
             m["tpr_upper"],
-            alpha=0.2,
+            color=style["color"],
+            alpha=style["fill_alpha"],
         )
 
-        # TNR subplot
+        # fpr subplot
         axes[1].plot(
             thresholds_x,
             m["fpr_mean"],
-            marker="o",
+            color=style["color"],
+            linestyle=style["linestyle"],
+            marker=style["marker"],
             label=f"Setting {setting}",
         )
         axes[1].fill_between(
             thresholds_x,
             m["fpr_lower"],
             m["fpr_upper"],
-            alpha=0.2,
+            color=style["color"],
+            alpha=style["fill_alpha"],
         )
 
-    # Configure TPR subplot
-    axes[0].set_xlabel("Threshold Index")
-    axes[0].set_ylabel("TPR (True Positive Rate)")
-    axes[0].set_title("TPR by Threshold (with 95% HDI)")
-    axes[0].set_xticks(range(len(thresholds)))
-    axes[0].set_xticklabels(
-        [f"{t:.1f}" for t in thresholds], rotation=45
+    # Overlay Bayesian p-value on right-side axis for TPR
+    ax_tpr_p = axes[0].twinx()
+    ax_tpr_p.set_zorder(axes[0].get_zorder() + 1)
+    ax_tpr_p.patch.set_visible(False)
+    ax_tpr_p.plot(
+        thresholds,
+        metrics["bayes_p_value"]["tpr_1_gt_0"],
+        color="black",
+        linestyle=":",
+        marker="x",
+        label=r"$Pr(TPR_1 > TPR_0)$",
+        zorder=10,
     )
-    axes[0].legend()
+    ax_tpr_p.set_ylabel(
+        "Posterior probability", color="black", fontsize=ax_label_fs
+    )
+    ax_tpr_p.set_ylim(0, 1)
+    ax_tpr_p.tick_params(labelsize=ax_tick_fs)
+
+    # Configure TPR subplot
+    axes[0].set_xlabel("Threshold", fontsize=ax_label_fs)
+    axes[0].set_ylabel(
+        "Posterior TPR", fontsize=ax_label_fs
+    )
+    axes[0].set_title(
+        "Posterior True Positive Rate (TPR) (with 95% HDI) \n ", fontsize=title_fs
+    )
+    axes[0].set_ylim(0, 1)
+    axes[0].yaxis.set_major_locator(FixedLocator(np.arange(0, 1.1, 0.1)))
+    axes[0].yaxis.set_major_formatter(FixedFormatter([f"{x:.1f}" for x in np.arange(0, 1.1, 0.1)]))
+    axes[0].xaxis.set_major_locator(MaxNLocator(integer=True))
+    h_tpr, l_tpr = axes[0].get_legend_handles_labels()
+    h_tpr_p, l_tpr_p = ax_tpr_p.get_legend_handles_labels()
+    axes[0].legend(
+        h_tpr + h_tpr_p, l_tpr + l_tpr_p, fontsize=legend_fs
+    )
+    axes[0].tick_params(labelsize=ax_tick_fs)
     axes[0].grid(True, alpha=0.3)
 
-    # Configure TNR subplot
-    axes[1].set_xlabel("Threshold Index")
-    axes[1].set_ylabel("FPR (False Positive Rate)")
-    axes[1].set_title("FPR by Threshold (with 95% HDI)")
-    axes[1].set_xticks(range(len(thresholds)))
-    axes[1].set_xticklabels(
-        [f"{t:.1f}" for t in thresholds], rotation=45
+    # Overlay Bayesian p-value on right-side axis for FPR
+    ax_fpr_p = axes[1].twinx()
+    ax_fpr_p.set_zorder(axes[1].get_zorder() + 1)
+    ax_fpr_p.patch.set_visible(False)
+    ax_fpr_p.plot(
+        thresholds,
+        metrics["bayes_p_value"]["fpr_1_gt_0"],
+        color="black",
+        linestyle=":",
+        marker="x",
+        label=r"$Pr(FPR_1 > FPR_0)$",
+        zorder=10,
     )
-    axes[1].legend()
+    ax_fpr_p.set_ylabel(
+        "Posterior probability", color="black", fontsize=ax_label_fs
+    )
+    ax_fpr_p.set_ylim(0, 1)
+    ax_fpr_p.tick_params(labelsize=ax_tick_fs)
+
+    # Configure FPR subplot
+    axes[1].set_xlabel("Threshold", fontsize=ax_label_fs)
+    axes[1].set_ylabel(
+        "Posterior FPR", fontsize=ax_label_fs
+    )
+    axes[1].set_title(
+        "Posterior False Positive Rate (FPR) (with 95% HDI) \n ", fontsize=title_fs
+    )
+    axes[1].set_ylim(0, 1)
+    axes[1].yaxis.set_major_locator(FixedLocator(np.arange(0, 1.1, 0.1)))
+    axes[1].yaxis.set_major_formatter(FixedFormatter([f"{x:.1f}" for x in np.arange(0, 1.1, 0.1)]))
+    axes[1].xaxis.set_major_locator(MaxNLocator(integer=True))
+    h_fpr, l_fpr = axes[1].get_legend_handles_labels()
+    h_fpr_p, l_fpr_p = ax_fpr_p.get_legend_handles_labels()
+    axes[1].legend(
+        h_fpr + h_fpr_p, l_fpr + l_fpr_p, fontsize=legend_fs
+    )
+    axes[1].tick_params(labelsize=ax_tick_fs)
     axes[1].grid(True, alpha=0.3)
 
-    fig.tight_layout()
-    fig.savefig(filename, dpi=100)
+    fig.tight_layout(pad=2.0)
+    fig.savefig(filename, dpi=600, bbox_inches="tight")
     plt.close()
-    return filename
+    return filename, metrics
 
 
 def plot_roc_curve_with_hdi(
@@ -388,7 +502,7 @@ def plot_roc_curve_with_hdi(
             0.95,
             f"Partial AUC = {partial_auc_mean:.3f}\n95% HDI: [{partial_auc_hdi[0]:.3f}, {partial_auc_hdi[1]:.3f}]\n"
             + f"FPR Range: [{fpr_min:.3f}, {fpr_max:.3f}]",
-            fontsize=11,
+            fontsize=legend_fs,
             bbox=dict(
                 boxstyle="round",
                 facecolor="wheat",
@@ -398,13 +512,16 @@ def plot_roc_curve_with_hdi(
         )
 
         # Configure subplot
-        ax.set_xlabel("FPR (1 - TNR)", fontsize=11)
-        ax.set_ylabel("TPR", fontsize=11)
+        ax.set_xlabel(
+            "FPR (1 - TNR)", fontsize=ax_label_fs
+        )
+        ax.set_ylabel("TPR", fontsize=ax_label_fs)
         ax.set_title(
             f"ROC Curve - Treatment {setting}\n(Partial Range with 95% HDI)",
-            fontsize=12,
+            fontsize=title_fs,
         )
-        ax.legend(fontsize=10, loc="lower right")
+        ax.legend(fontsize=legend_fs, loc="lower right")
+        ax.tick_params(labelsize=ax_tick_fs)
         ax.grid(True, alpha=0.3)
         # restrict x-axis exactly to observed overlap range
         ax.set_xlim([fpr_min, fpr_max])
@@ -432,15 +549,6 @@ def psa_result(
     simulation_results = read_psa_estimates_from_directory(
         path, case_interaction=case_interaction
     )
-    # plot settings
-    plt.rcParams["font.family"] = "serif"
-    plt.rcParams["font.variant"] = "normal"
-    ax_label_fs = 18
-    sup_ax_label_fs = 24
-    ax_tick_fs = 14
-    title_fs = 16
-    legend_fs = 13
-    plt.style.use("grayscale")
     metric = "abs_error"
     priors = [
         "diffuse",

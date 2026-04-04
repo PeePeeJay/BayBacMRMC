@@ -213,7 +213,7 @@ def simulate_case_data(
 
     gamma_c = rng.normal(0, 1.0, size=n_cases)  # (n_cases,)
     delta_rc = rng.normal(
-        0, 0.5, size=(n_readers, n_cases)
+        0, 1, size=(n_readers, n_cases)
     )  # (n_readers, n_cases)
 
     settings = np.array([0, 1])

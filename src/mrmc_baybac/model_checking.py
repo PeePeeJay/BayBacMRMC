@@ -249,6 +249,7 @@ def run_psa(
                                     "mu_a",
                                     "mu_b",
                                     "gamma",
+                                   
                                 ],
                                 stat_focus="mean",
                             )
@@ -396,24 +397,16 @@ def run_psa(
                             "mu_b_neg": summary_neg.loc[
                                 "mu_b", "mean"
                             ],
-                            "mu_gamma_neg": summary_neg.loc[
-                                "case_variability", "mean"
-                            ],
-                            "mu_delta_neg": summary_neg.loc[
-                                "case_interaction", "mean"
-                            ],
+                            "mu_gamma_neg": idata_neg.posterior["case_variability"].values.flatten().mean(),
+                            "mu_delta_neg": idata_neg.posterior["reader_case_interaction"].values.flatten().mean(),
                             "mu_a_pos": summary_pos.loc[
                                 "mu_a", "mean"
                             ],
                             "mu_b_pos": summary_pos.loc[
                                 "mu_b", "mean"
                             ],
-                            "mu_gamma_pos": summary_pos.loc[
-                                "case_variability", "mean"
-                            ],
-                            "mu_delta_pos": summary_pos.loc[
-                                "case_interaction", "mean"
-                            ],
+                            "mu_gamma_pos": idata_pos.posterior["case_variability"].values.flatten().mean(),
+                            "mu_delta_pos": idata_pos.posterior["reader_case_interaction"].values.flatten().mean(),
                             "intercept_freq": np.nan,
                             "slope_freq": np.nan,
                         }
