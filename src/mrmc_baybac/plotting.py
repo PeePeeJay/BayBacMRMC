@@ -28,6 +28,8 @@ plt.style.use("grayscale")
 def plot_tpr_fpr_by_threshold(
     model,
     filename: str = "figures/tpr_tnr_by_threshold.png",
+    predictive_target: str = "observed_panel",
+    n_new_cases: int | None = None,
 ):
     """Generate and save TPR/FPR plots with 95% HDI across thresholds.
 
@@ -39,6 +41,9 @@ def plot_tpr_fpr_by_threshold(
         model: The BalancedModel instance.
         filename: path where the figure will be saved. The directory
             portion of the path will be created if necessary.
+        predictive_target: either ``observed_panel`` or ``new_cases``.
+        n_new_cases: number of future cases per truth subset used when
+            ``predictive_target='new_cases'``.
 
     Returns:
         str: path to the saved figure file.
@@ -54,7 +59,9 @@ def plot_tpr_fpr_by_threshold(
     # Collect posterior samples for all thresholds in sorted order
     for threshold in thresholds:
         tpr_dict, tnr_dict = model._compute_tpr_tnr(
-            threshold
+            threshold,
+            predictive_target=predictive_target,
+            n_new_cases=n_new_cases,
         )
         tprs["0"].append(tpr_dict["0"])
         tprs["1"].append(tpr_dict["1"])
@@ -91,6 +98,8 @@ def plot_tpr_fpr_by_threshold(
             "fpr_mean": means_fpr,
             "fpr_lower": fpr_lower,
             "fpr_upper": fpr_upper,
+            "tpr_samples": [np.asarray(s, dtype=float).ravel() for s in tprs[setting]],
+            "fpr_samples": [np.asarray(s, dtype=float).ravel() for s in fprs[setting]],
         }
 
     # Bayesian posterior probability that setting 1 is larger than setting 0
@@ -135,7 +144,7 @@ def plot_tpr_fpr_by_threshold(
             "fill_alpha": 0.25,
         },
     }
-
+    settings = {"0": "Baseline", "1": "Enhanced"}
     for setting in ["0", "1"]:
         m = metrics[setting]
         style = setting_style[setting]
@@ -148,7 +157,7 @@ def plot_tpr_fpr_by_threshold(
             color=style["color"],
             linestyle=style["linestyle"],
             marker=style["marker"],
-            label=f"Setting {setting}",
+            label=f"{settings[setting]} imaging",
         )
         axes[0].fill_between(
             thresholds_x,
@@ -165,7 +174,7 @@ def plot_tpr_fpr_by_threshold(
             color=style["color"],
             linestyle=style["linestyle"],
             marker=style["marker"],
-            label=f"Setting {setting}",
+            label=f"{settings[setting]} imaging",
         )
         axes[1].fill_between(
             thresholds_x,
@@ -185,7 +194,7 @@ def plot_tpr_fpr_by_threshold(
         color="black",
         linestyle=":",
         marker="x",
-        label=r"$Pr(TPR_1 > TPR_0)$",
+        label=r"$Pr(\Delta TPR>0)$",
         zorder=10,
     )
     ax_tpr_p.set_ylabel(
@@ -200,7 +209,7 @@ def plot_tpr_fpr_by_threshold(
         "Posterior TPR", fontsize=ax_label_fs
     )
     axes[0].set_title(
-        "Posterior True Positive Rate (TPR) (with 95% HDI) \n ", fontsize=title_fs
+        "Posterior TPR (with 95% HDI) \n ", fontsize=title_fs
     )
     axes[0].set_ylim(0, 1)
     axes[0].yaxis.set_major_locator(FixedLocator(np.arange(0, 1.1, 0.1)))
@@ -224,7 +233,7 @@ def plot_tpr_fpr_by_threshold(
         color="black",
         linestyle=":",
         marker="x",
-        label=r"$Pr(FPR_1 > FPR_0)$",
+        label=r"$Pr(\Delta FPR>0)$",
         zorder=10,
     )
     ax_fpr_p.set_ylabel(
@@ -239,7 +248,7 @@ def plot_tpr_fpr_by_threshold(
         "Posterior FPR", fontsize=ax_label_fs
     )
     axes[1].set_title(
-        "Posterior False Positive Rate (FPR) (with 95% HDI) \n ", fontsize=title_fs
+        "Posterior FPR (with 95% HDI) \n ", fontsize=title_fs
     )
     axes[1].set_ylim(0, 1)
     axes[1].yaxis.set_major_locator(FixedLocator(np.arange(0, 1.1, 0.1)))
@@ -260,7 +269,10 @@ def plot_tpr_fpr_by_threshold(
 
 
 def plot_roc_curve_with_hdi(
-    model, filename: str = "figures/roc_curve_with_hdi.png"
+    model,
+    filename: str = "figures/roc_curve_with_hdi.png",
+    predictive_target: str = "observed_panel",
+    n_new_cases: int | None = None,
 ):
     """Generate and save ROC curve plot with 95% HDI band and partial AUC uncertainty.
 
@@ -272,13 +284,29 @@ def plot_roc_curve_with_hdi(
         model: The BalancedModel instance.
         filename: path where the figure will be saved. The directory
             portion of the path will be created if necessary.
+        predictive_target: either ``observed_panel`` or ``new_cases``.
+        n_new_cases: number of future cases per truth subset used when
+            ``predictive_target='new_cases'``.
 
     Returns:
         str: path to the saved figure file.
     """
     # Get ROC results including partial AUC
-    if model.roc_results is None:
-        model.roc_curve_analysis()
+    if (
+        model.roc_results is None
+        or getattr(
+            model,
+            "_roc_results_predictive_target",
+            None,
+        )
+        != predictive_target
+        or getattr(model, "_roc_results_n_new_cases", None)
+        != n_new_cases
+    ):
+        model.roc_curve_analysis(
+            predictive_target=predictive_target,
+            n_new_cases=n_new_cases,
+        )
 
     roc_results = model.roc_results
 
@@ -294,7 +322,9 @@ def plot_roc_curve_with_hdi(
     for threshold in thresholds:
         try:
             tpr_dict, tnr_dict = model._compute_tpr_tnr(
-                threshold
+                threshold,
+                predictive_target=predictive_target,
+                n_new_cases=n_new_cases,
             )
             for setting in ["0", "1"]:
                 all_tprs[setting].append(tpr_dict[setting])

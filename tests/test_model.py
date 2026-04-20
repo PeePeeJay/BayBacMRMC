@@ -1,5 +1,6 @@
 import os
 
+import arviz as az
 import pytest
 from mrmc_baybac.model import BaseModel, BalancedModel
 from mrmc_baybac.simulation import (
@@ -7,6 +8,22 @@ from mrmc_baybac.simulation import (
     mock_reading_data,
 )
 import numpy as np
+
+
+def _fake_aggregated_idata():
+    return az.from_dict(
+        posterior={
+            "alpha": np.array(
+                [[[0.2, -0.1], [0.0, 0.1], [-0.2, 0.3]]]
+            ),
+            "beta": np.array(
+                [[[0.15, 0.05], [0.1, -0.05], [0.05, 0.1]]]
+            ),
+            "gamma": np.array([[0.15, 0.2, 0.25]]),
+        },
+        coords={"reader": [0, 1]},
+        dims={"alpha": ["reader"], "beta": ["reader"]},
+    )
 
 
 @pytest.fixture
@@ -145,26 +162,18 @@ def test_roc_curve_analysis(vandyke_df):
             roc_results[setting]["tpr"]
         )
 
-    # additionally, ensure partial range corresponds to discrete overlap of FPR lists
+    # additionally, ensure partial range corresponds to the shared numeric
+    # FPR interval across treatment settings
     for setting in ["0", "1"]:
         other = "1" if setting == "0" else "0"
         fpr = np.array(roc_results[setting]["fpr"])
         fpr_other = np.array(roc_results[other]["fpr"])
-        common = np.intersect1d(
-            np.round(fpr, 6), np.round(fpr_other, 6)
+        expect_min = max(
+            float(fpr.min()), float(fpr_other.min())
         )
-        if len(common) >= 2:
-            expect_min, expect_max = float(
-                common.min()
-            ), float(common.max())
-        else:
-            # fallback to numeric intersection used by implementation
-            expect_min = max(
-                float(fpr.min()), float(fpr_other.min())
-            )
-            expect_max = min(
-                float(fpr.max()), float(fpr_other.max())
-            )
+        expect_max = min(
+            float(fpr.max()), float(fpr_other.max())
+        )
         got_min, got_max = roc_results[setting][
             "partial_fpr_range"
         ]
@@ -227,6 +236,75 @@ def test_roc_curve_analysis_cxr(cxr_df):
         assert len(roc_results[setting]["fpr"]) == len(
             roc_results[setting]["tpr"]
         )
+
+
+def test_compute_tpr_tnr_new_cases_balanced_model(
+    simulated_aggregated_data, monkeypatch
+):
+    balanced_model = BalancedModel(
+        obs_data=simulated_aggregated_data
+    )
+    neg_idata = _fake_aggregated_idata()
+    pos_idata = _fake_aggregated_idata()
+    monkeypatch.setattr(
+        balanced_model,
+        "run_inference",
+        lambda threshold: [neg_idata, pos_idata],
+    )
+
+    small_tpr, small_tnr = balanced_model._compute_tpr_tnr(
+        0.5,
+        predictive_target="new_cases",
+        n_new_cases=2,
+    )
+    large_tpr, _ = balanced_model._compute_tpr_tnr(
+        0.5,
+        predictive_target="new_cases",
+        n_new_cases=25,
+    )
+
+    for setting in ["0", "1"]:
+        assert small_tpr[setting].shape == (1, 3)
+        assert small_tnr[setting].shape == (1, 3)
+        assert np.all((0 <= small_tpr[setting]) & (small_tpr[setting] <= 1))
+        assert np.all((0 <= small_tnr[setting]) & (small_tnr[setting] <= 1))
+
+    assert not np.allclose(small_tpr["0"], large_tpr["0"])
+
+
+def test_plot_tpr_tnr_by_threshold_forwards_new_case_arguments(
+    vandyke_df, tmp_path, monkeypatch
+):
+    balanced_model = BalancedModel(obs_data=vandyke_df)
+    calls = []
+
+    def fake_compute(
+        threshold,
+        predictive_target="observed_panel",
+        n_new_cases=None,
+    ):
+        calls.append((predictive_target, n_new_cases))
+        tpr = np.array([[0.6, 0.7]])
+        tnr = np.array([[0.8, 0.85]])
+        return {"0": tpr, "1": tpr}, {"0": tnr, "1": tnr}
+
+    monkeypatch.setattr(
+        balanced_model,
+        "_compute_tpr_tnr",
+        fake_compute,
+    )
+
+    out_file = tmp_path / "tpr_tnr_new_cases.png"
+    path = balanced_model.plot_tpr_tnr_by_threshold(
+        filename=str(out_file),
+        predictive_target="new_cases",
+        n_new_cases=17,
+    )
+
+    assert os.path.isfile(path[0])
+    assert calls
+    assert all(target == "new_cases" for target, _ in calls)
+    assert all(case_count == 17 for _, case_count in calls)
 
 
 def test_plot_tpr_tnr_by_threshold_creates_file(

@@ -2,14 +2,17 @@ import os
 import json
 import pickle
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 import xarray as xr
 import pickle
+import arviz as az
 
 from scipy.special import expit
+from sklearn.metrics import auc
 
 
 def invlogit(x):
@@ -71,6 +74,246 @@ def get_thresholds_from_ratings(
 def bayes_p_value(a, b):
     """Compute the Bayesian p-value for the hypothesis that a > b based on posterior samples."""
     return np.sum(a > b) / len(a) 
+
+
+def common_fpr_interval(*fpr_curves):
+    """Return the numeric overlap of multiple FPR curves.
+
+    Args:
+        *fpr_curves: One or more arrays/lists of FPR values.
+
+    Returns:
+        tuple[float, float]: (lower_bound, upper_bound) of common interval.
+    """
+    minima = []
+    maxima = []
+
+    for curve in fpr_curves:
+        arr = np.asarray(curve, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            continue
+        minima.append(float(arr.min()))
+        maxima.append(float(arr.max()))
+
+    if not minima:
+        raise ValueError("No valid FPR curves were provided.")
+
+    fpr_min = max(minima)
+    fpr_max = min(maxima)
+    if fpr_min >= fpr_max:
+        raise ValueError(
+            "No common FPR interval exists: "
+            f"lower bound {fpr_min:.4f} is not smaller than upper bound {fpr_max:.4f}."
+        )
+
+    return fpr_min, fpr_max
+
+
+def get_or_reference_curves(
+    or_specs: pd.DataFrame,
+    fpr_col: str = "sens",
+    setting0_col: str = "mean_0",
+    setting1_col: str = "mean_1",
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Extract and sort OR reference ROC curves for both treatment settings."""
+    if fpr_col not in or_specs.columns:
+        raise KeyError(f"Missing column in OR specs: {fpr_col}")
+    if setting0_col not in or_specs.columns:
+        raise KeyError(f"Missing column in OR specs: {setting0_col}")
+    if setting1_col not in or_specs.columns:
+        raise KeyError(f"Missing column in OR specs: {setting1_col}")
+
+    fpr = 1 - np.asarray(or_specs[fpr_col], dtype=float)
+    tpr_0 = np.asarray(or_specs[setting0_col], dtype=float)
+    tpr_1 = np.asarray(or_specs[setting1_col], dtype=float)
+
+    finite = np.isfinite(fpr) & np.isfinite(tpr_0) & np.isfinite(tpr_1)
+    if not np.any(finite):
+        raise ValueError("OR specs do not contain valid finite ROC values.")
+
+    fpr = fpr[finite]
+    tpr_0 = tpr_0[finite]
+    tpr_1 = tpr_1[finite]
+
+    order = np.argsort(fpr)
+    fpr_sorted = fpr[order]
+    return {
+        "0": (fpr_sorted, tpr_0[order]),
+        "1": (fpr_sorted, tpr_1[order]),
+    }
+
+
+def extract_partial_roc_curve(
+    fpr,
+    tpr,
+    fpr_min: float = 0.1,
+    fpr_max: float = 0.7,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Clip/interpolate an ROC curve to a specific FPR interval."""
+    fpr = np.asarray(fpr, dtype=float)
+    tpr = np.asarray(tpr, dtype=float)
+
+    finite = np.isfinite(fpr) & np.isfinite(tpr)
+    fpr = fpr[finite]
+    tpr = tpr[finite]
+
+    if fpr.size < 2:
+        raise ValueError("Need at least two finite ROC points.")
+    if fpr_min >= fpr_max:
+        raise ValueError("fpr_min must be smaller than fpr_max.")
+
+    order = np.argsort(fpr)
+    fpr = fpr[order]
+    tpr = tpr[order]
+
+    if fpr_min < fpr[0] or fpr_max > fpr[-1]:
+        raise ValueError(
+            "Requested FPR bounds are outside curve support: "
+            f"[{fpr[0]:.4f}, {fpr[-1]:.4f}]"
+        )
+
+    mask = (fpr >= fpr_min) & (fpr <= fpr_max)
+    fpr_partial = fpr[mask]
+    tpr_partial = tpr[mask]
+
+    tpr_at_min = np.interp(fpr_min, fpr, tpr)
+    tpr_at_max = np.interp(fpr_max, fpr, tpr)
+
+    if fpr_partial.size == 0 or fpr_partial[0] > fpr_min:
+        fpr_partial = np.insert(fpr_partial, 0, fpr_min)
+        tpr_partial = np.insert(tpr_partial, 0, tpr_at_min)
+    else:
+        fpr_partial[0] = fpr_min
+        tpr_partial[0] = tpr_at_min
+
+    if fpr_partial[-1] < fpr_max:
+        fpr_partial = np.append(fpr_partial, fpr_max)
+        tpr_partial = np.append(tpr_partial, tpr_at_max)
+    else:
+        fpr_partial[-1] = fpr_max
+        tpr_partial[-1] = tpr_at_max
+
+    return fpr_partial, tpr_partial
+
+
+def partial_roc_auc_from_curve(
+    fpr,
+    tpr,
+    fpr_min: float = 0.1,
+    fpr_max: float = 0.7,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """Compute partial AUC from one ROC curve inside FPR bounds."""
+    fpr_partial, tpr_partial = extract_partial_roc_curve(
+        fpr,
+        tpr,
+        fpr_min=fpr_min,
+        fpr_max=fpr_max,
+    )
+    return float(auc(fpr_partial, tpr_partial)), fpr_partial, tpr_partial
+
+
+def compare_partial_auc_between_settings(
+    fpr_samples_0,
+    tpr_samples_0,
+    fpr_samples_1,
+    tpr_samples_1,
+    fpr_min: float = 0.1,
+    fpr_max: float = 0.7,
+    hdi_prob: float = 0.95,
+) -> dict[str, Any]:
+    """Compare partial AUC posterior samples between setting 1 and setting 0.
+
+    The inputs are expected as arrays with shape (n_threshold_points, n_samples)
+    or (n_samples, n_threshold_points). The function computes a shared FPR
+    interval, sample-wise partial AUC for each setting, HDIs, and
+    Pr(AUC_1 > AUC_0).
+    """
+
+    def _coerce_to_point_by_sample(name: str, arr_like) -> np.ndarray:
+        arr = np.asarray(arr_like, dtype=float)
+        if arr.ndim != 2:
+            raise ValueError(f"{name} must be 2D, got shape {arr.shape}.")
+        # Expected orientation: (n_threshold_points, n_samples).
+        # Rows = threshold points (few), columns = posterior samples (many).
+        # No automatic transpose — callers must supply the correct orientation.
+        return arr
+
+    fpr0 = _coerce_to_point_by_sample("fpr_samples_0", fpr_samples_0)
+    tpr0 = _coerce_to_point_by_sample("tpr_samples_0", tpr_samples_0)
+    fpr1 = _coerce_to_point_by_sample("fpr_samples_1", fpr_samples_1)
+    tpr1 = _coerce_to_point_by_sample("tpr_samples_1", tpr_samples_1)
+
+    if fpr0.shape != tpr0.shape:
+        raise ValueError(
+            "fpr_samples_0 and tpr_samples_0 must have matching shape."
+        )
+    if fpr1.shape != tpr1.shape:
+        raise ValueError(
+            "fpr_samples_1 and tpr_samples_1 must have matching shape."
+        )
+    if fpr0.shape[1] != fpr1.shape[1]:
+        raise ValueError(
+            "Both settings must have the same number of posterior samples."
+        )
+
+    if fpr_min is None and fpr_max is None:
+        shared_min, shared_max = common_fpr_interval(fpr0, fpr1)
+        fpr_min = max(float(fpr_min), shared_min)
+        fpr_max = min(float(fpr_max), shared_max)
+
+    if fpr_min >= fpr_max:
+        raise ValueError(
+            "Invalid partial FPR bounds after intersection: "
+            f"[{fpr_min:.4f}, {fpr_max:.4f}]."
+        )
+
+    auc0 = []
+    auc1 = []
+    for i in range(fpr0.shape[1]):
+        try:
+            auc0_i, _, _ = partial_roc_auc_from_curve(
+                fpr0[:, i], tpr0[:, i], fpr_min=fpr_min, fpr_max=fpr_max
+            )
+            auc1_i, _, _ = partial_roc_auc_from_curve(
+                fpr1[:, i], tpr1[:, i], fpr_min=fpr_min, fpr_max=fpr_max
+            )
+        except ValueError:
+            continue
+        auc0.append(auc0_i)
+        auc1.append(auc1_i)
+
+    auc0 = np.asarray(auc0, dtype=float)
+    auc1 = np.asarray(auc1, dtype=float)
+    if auc0.size == 0 or auc1.size == 0:
+        raise ValueError(
+            "No valid posterior samples available to compute partial AUC comparison. "
+            f"All {fpr0.shape[1]} samples failed the FPR bounds check "
+            f"[{fpr_min:.4f}, {fpr_max:.4f}]. "
+            "Check that fpr_min/fpr_max lie within the ROC curve support."
+        )
+
+    auc_diff = auc1 - auc0
+    prob_auc1_gt_auc0 = float(np.mean(auc_diff > 0))
+
+    hdi0 = az.hdi(auc0, hdi_prob=hdi_prob)
+    hdi1 = az.hdi(auc1, hdi_prob=hdi_prob)
+    hdi_diff = az.hdi(auc_diff, hdi_prob=hdi_prob)
+
+    return {
+        "fpr_bounds": (float(fpr_min), float(fpr_max)),
+        "auc_samples_0": auc0,
+        "auc_samples_1": auc1,
+        "auc_diff_samples": auc_diff,
+        "auc_mean_0": float(np.mean(auc0)),
+        "auc_mean_1": float(np.mean(auc1)),
+        "auc_diff_mean": float(np.mean(auc_diff)),
+        "auc_hdi_0": (float(hdi0[0]), float(hdi0[1])),
+        "auc_hdi_1": (float(hdi1[0]), float(hdi1[1])),
+        "auc_diff_hdi": (float(hdi_diff[0]), float(hdi_diff[1])),
+        "prob_auc1_gt_auc0": prob_auc1_gt_auc0,
+        "n_valid_samples": int(auc0.size),
+    }
 
 def compute_empirical_ba(
     data: pd.DataFrame,
